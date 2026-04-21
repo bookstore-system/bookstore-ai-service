@@ -2,16 +2,10 @@ version: '3.8'
 
 services:
   ai-service:
-    build: 
-      context: .
-      target: build
+    image: truongikpk/bookstore-ai-service:v1.0.0
     container_name: ai-service
     ports:
       - "8090:8080"
-    volumes:
-      - .:/build
-      - ~/.m2:/root/.m2
-    command: mvn spring-boot:run -Dspring-boot.run.profiles=docker
     environment:
       SPRING_PROFILES_ACTIVE: docker
     networks:
