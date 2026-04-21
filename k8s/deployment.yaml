@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: ai-service
-        image: truongikpk/bookstore-ai-service:latest
+        image: truongdocker1/bookstore-ai-service:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
