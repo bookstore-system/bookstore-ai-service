@@ -13,7 +13,10 @@ services:
       - ~/.m2:/root/.m2
     command: mvn spring-boot:run -Dspring-boot.run.profiles=docker
     environment:
-      SPRING_PROFILES_ACTIVE: dev
+      SPRING_PROFILES_ACTIVE: docker
+      BOOK_SERVICE_URL: http://book-service:8080
+      ORDER_SERVICE_URL: http://order-service:8080
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     networks:
       - bookstore-network
 

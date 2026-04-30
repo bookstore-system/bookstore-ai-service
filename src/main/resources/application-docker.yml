@@ -5,6 +5,6 @@ gemini:
 
 clients:
   book-service:
-    url: ${BOOK_SERVICE_URL:http://localhost:8082}
+    url: ${BOOK_SERVICE_URL:http://book-service:8080}
   order-service:
-    url: ${ORDER_SERVICE_URL:http://localhost:8084}
+    url: ${ORDER_SERVICE_URL:http://order-service:8080}
