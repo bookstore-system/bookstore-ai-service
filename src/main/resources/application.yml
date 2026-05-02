@@ -1,3 +1,8 @@
 spring:
   application:
     name: bookstore-ai-service
+  profiles:
+    active: dev
+
+server:
+  port: 8080
