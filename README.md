@@ -4,6 +4,10 @@
 
 ## 1) Chuc nang
 
+- Chatbot (tuong thich monolith):
+  - `POST /api/v1/chatbot/chat` — body `ChatbotRequest`, tra `ApiResponse<ChatbotResponse>`
+  - `POST /api/v1/chatbot/ai` — body chuoi JSON text, tra chuoi phan hoi
+  - `POST /api/v1/chat/ai` — alias legacy, body chuoi JSON text, tra chuoi phan hoi
 - Chat voi AI:
   - `POST /api/v1/ai/chat`
 - Tim kiem thong minh (goi sang `book-service`):
@@ -17,7 +21,7 @@ Tat ca endpoint tra theo format:
 {
   "code": 200,
   "message": "Success",
-  "data": {}
+  "result": {}
 }
 ```
 
@@ -57,7 +61,15 @@ Port mapping:
 - host: `8090`
 - container: `8080`
 
-## 5) Test API
+## 5) Postman
+
+Import thư mục `postman/`:
+
+- `bookstore-ai-service.postman_collection.json` — toàn bộ API
+- `bookstore-ai-service.local.postman_environment.json` — Docker (`http://localhost:8090`)
+- `bookstore-ai-service.maven.postman_environment.json` — Maven (`http://localhost:8080`)
+
+## 6) Test API
 
 ### 5.1 Chat AI
 
@@ -88,7 +100,7 @@ curl -X POST http://localhost:8090/api/v1/ai/search \
 curl http://localhost:8090/api/v1/ai/report
 ```
 
-## 6) Luu y
+## 7) Luu y
 
 - Neu chua cau hinh `GEMINI_API_KEY`, endpoint `/api/v1/ai/chat` van tra ve message thong bao cau hinh key.
 - `ai-service` khong truy cap DB service khac; giao tiep qua API (`book-service`, `order-service`) dung Feign.

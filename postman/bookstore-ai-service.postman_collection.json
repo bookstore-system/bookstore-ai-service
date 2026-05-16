@@ -1,0 +1,346 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-ai-service-2026",
+    "name": "Bookstore AI Service",
+    "description": "Full API test cho bookstore-ai-service.\n\nBase path: `/api/v1`\nWrapper response (AI & Chatbot chat): `{ code, message, result }`\nText endpoints (`/chatbot/ai`, `/chat/ai`): trả về chuỗi plain text.\n\n**Chạy service:**\n- Docker Compose: `http://localhost:8090` (map 8090:8080)\n- Maven local: `http://localhost:8080`\n\n**Phụ thuộc:**\n- `GEMINI_API_KEY` — chat/chatbot/report AI\n- `BOOK_SERVICE_URL` — `/api/v1/ai/search`\n- `ORDER_SERVICE_URL` — `/api/v1/ai/report`\n\n**Thứ tự khuyến nghị:** Chatbot → AI → Docs",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8090",
+      "type": "string"
+    },
+    {
+      "key": "sessionId",
+      "value": "session-demo-001",
+      "type": "string",
+      "description": "Session chat; tự cập nhật sau Chatbot Chat hoặc AI Chat"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Chatbot",
+      "item": [
+        {
+          "name": "Chat với AI (ChatbotRequest)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('ApiResponse chatbot success', () => {",
+                  "    pm.expect(body.code).to.eql(1000);",
+                  "    pm.expect(body.message).to.eql('Gửi tin nhắn thành công');",
+                  "    pm.expect(body.result).to.be.an('object');",
+                  "    pm.expect(body.result.response).to.be.a('string');",
+                  "    pm.expect(body.result.sessionId).to.be.a('string');",
+                  "});",
+                  "if (body.result && body.result.sessionId) {",
+                  "    pm.collectionVariables.set('sessionId', body.result.sessionId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Xin chào, bạn có thể gợi ý 3 cuốn sách lập trình dễ học không?\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"attachments\": [\n    {\n      \"type\": \"image\",\n      \"url\": \"https://example.com/book-cover.jpg\",\n      \"name\": \"cover.jpg\",\n      \"location\": {\n        \"lat\": 10.762622,\n        \"lng\": 106.660172,\n        \"address\": \"Quận 1, TP.HCM\"\n      }\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chatbot/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chatbot", "chat"]
+            },
+            "description": "Gửi ChatbotRequest (message, sessionId, attachments) và nhận ApiResponse với result { response, sessionId }."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat AI dạng text",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Plain text response', () => {",
+                  "    pm.expect(pm.response.text()).to.be.a('string').that.is.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "\"Gợi ý cho tôi một cuốn sách Java cơ bản\"",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chatbot/ai",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chatbot", "ai"]
+            },
+            "description": "Body là chuỗi JSON (ví dụ `\"text\"`), response là chuỗi phản hồi chatbot."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "02 - Chat (Legacy)",
+      "item": [
+        {
+          "name": "Gửi tin nhắn AI alias",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Plain text response', () => {",
+                  "    pm.expect(pm.response.text()).to.be.a('string').that.is.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "\"Sách nào phù hợp cho người mới học Python?\"",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/ai",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chat", "ai"]
+            },
+            "description": "Endpoint tương thích cũ — body chuỗi JSON, response chuỗi."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "03 - AI",
+      "item": [
+        {
+          "name": "AI Chat",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('ApiResponse success', () => {",
+                  "    pm.expect(body.code).to.eql(200);",
+                  "    pm.expect(body.message).to.eql('Success');",
+                  "    pm.expect(body.result).to.be.an('object');",
+                  "    pm.expect(body.result.response).to.be.a('string');",
+                  "    pm.expect(body.result.sessionId).to.be.a('string');",
+                  "});",
+                  "if (body.result && body.result.sessionId) {",
+                  "    pm.collectionVariables.set('sessionId', body.result.sessionId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Tóm tắt ngắn về Clean Code trong 2 câu\",\n  \"sessionId\": \"{{sessionId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ai/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "ai", "chat"]
+            },
+            "description": "Chat AI microservice — AiChatRequest (message bắt buộc, sessionId tùy chọn)."
+          },
+          "response": []
+        },
+        {
+          "name": "AI Search",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('ApiResponse success', () => {",
+                  "    pm.expect(body.code).to.eql(200);",
+                  "    pm.expect(body.message).to.eql('Success');",
+                  "    pm.expect(body.result).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"keyword\": \"clean code\",\n  \"page\": 0,\n  \"size\": 5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ai/search",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "ai", "search"]
+            },
+            "description": "Tìm kiếm sách qua book-service (cần BOOK_SERVICE_URL)."
+          },
+          "response": []
+        },
+        {
+          "name": "AI Report",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('ApiResponse success', () => {",
+                  "    pm.expect(body.code).to.eql(200);",
+                  "    pm.expect(body.message).to.eql('Success');",
+                  "    pm.expect(body.result).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ai/report",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "ai", "report"]
+            },
+            "description": "Báo cáo đơn hàng + tóm tắt AI (cần ORDER_SERVICE_URL và GEMINI_API_KEY)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "04 - OpenAPI / Docs",
+      "item": [
+        {
+          "name": "OpenAPI JSON",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('OpenAPI document', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.openapi || body.swagger).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v3/api-docs",
+              "host": ["{{baseUrl}}"],
+              "path": ["v3", "api-docs"]
+            },
+            "description": "Springdoc OpenAPI spec."
+          },
+          "response": []
+        },
+        {
+          "name": "Swagger UI (browser)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/swagger-ui.html",
+              "host": ["{{baseUrl}}"],
+              "path": ["swagger-ui.html"]
+            },
+            "description": "Mở trong trình duyệt để xem Swagger UI."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
