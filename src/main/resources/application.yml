@@ -3,6 +3,22 @@ spring:
     name: bookstore-ai-service
   profiles:
     active: dev
+  cloud:
+    openfeign:
+      client:
+        config:
+          default:
+            connect-timeout: 5000
+            read-timeout: 30000
+          gemini-generate-content-client:
+            read-timeout: 60000
 
 server:
   port: 8080
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method

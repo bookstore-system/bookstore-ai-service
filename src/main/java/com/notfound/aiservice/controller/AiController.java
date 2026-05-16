@@ -6,6 +6,7 @@ import com.notfound.aiservice.model.dto.response.AiChatResponse;
 import com.notfound.aiservice.model.dto.response.AiReportResponse;
 import com.notfound.aiservice.model.dto.response.ApiResponse;
 import com.notfound.aiservice.service.AiService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -20,6 +21,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/ai")
 @RequiredArgsConstructor
+@Tag(name = "AI", description = "Chat, tìm kiếm và báo cáo AI")
 public class AiController {
     private final AiService aiService;
 

@@ -1,9 +1,11 @@
 gemini:
   api:
     key: ${GEMINI_API_KEY:}
-  model: ${GEMINI_MODEL:gemini-1.5-flash}
+  model: ${GEMINI_MODEL:gemini-2.5-flash}
 
 clients:
+  gemini:
+    url: https://generativelanguage.googleapis.com
   book-service:
     url: ${BOOK_SERVICE_URL:http://book-service:8080}
   order-service:
