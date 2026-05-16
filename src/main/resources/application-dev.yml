@@ -4,6 +4,8 @@ gemini:
   model: ${GEMINI_MODEL:gemini-2.5-flash}
 
 clients:
+  gemini:
+    url: https://generativelanguage.googleapis.com
   book-service:
     url: ${BOOK_SERVICE_URL:http://localhost:8082}
   order-service:

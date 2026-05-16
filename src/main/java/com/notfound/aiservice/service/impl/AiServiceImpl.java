@@ -57,7 +57,7 @@ public class AiServiceImpl implements AiService {
     public Map<String, Object> search(AiSearchRequest request) {
         int page = request.getPage() == null || request.getPage() < 0 ? 0 : request.getPage();
         int size = request.getSize() == null || request.getSize() <= 0 ? 10 : request.getSize();
-        return bookServiceClient.searchBooks(page, size, request.getKeyword());
+        return bookServiceClient.searchBooks(request.getKeyword(), page, size);
     }
 
     @Override

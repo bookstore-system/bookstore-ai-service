@@ -9,10 +9,10 @@ import java.util.Map;
 @FeignClient(name = "book-service-client", url = "${clients.book-service.url}")
 public interface BookServiceClient {
 
-    @GetMapping("/api/v1/books")
+    @GetMapping("/api/v1/books/search")
     Map<String, Object> searchBooks(
+            @RequestParam("keyword") String keyword,
             @RequestParam("page") Integer page,
-            @RequestParam("size") Integer size,
-            @RequestParam("keyword") String keyword
+            @RequestParam("size") Integer size
     );
 }
