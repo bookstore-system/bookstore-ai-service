@@ -10,3 +10,12 @@ clients:
     url: ${BOOK_SERVICE_URL:http://localhost:8082}
   order-service:
     url: ${ORDER_SERVICE_URL:http://localhost:8084}
+  promotion-service:
+    url: ${PROMOTION_SERVICE_URL:http://localhost:8086}
+  review-service:
+    url: ${REVIEW_SERVICE_URL:http://localhost:8087}
+
+ai:
+  agent:
+    max-tool-iterations: 4
+    enabled-tools: searchBooksTool,recommendationTool,compareBooksTool,reviewSummaryTool,promotionTool,stockCheckTool,semanticSearchTool,imageScannerTool,guardrailTool,orderLookupTool
