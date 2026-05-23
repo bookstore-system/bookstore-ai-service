@@ -8,7 +8,7 @@ import java.util.Map;
 
 /**
  * Response của endpoint AI chat. Sau khi gộp chat vào AI Agent, response trả
- * thêm intent (tool đầu tiên agent chọn) và trace các tool đã gọi.
+ * thêm intent, trace các tool đã gọi và danh sách card sách chuẩn hoá.
  */
 @Data
 @Builder
@@ -17,6 +17,7 @@ public class AiChatResponse {
     private String sessionId;
     private String intent;
     private List<ToolCallTrace> toolCalls;
+    private List<BookCard> books;
 
     @Data
     @Builder

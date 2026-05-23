@@ -41,6 +41,7 @@ public class AiServiceImpl implements AiService {
                 .sessionId(agentResponse.getSessionId())
                 .intent(agentResponse.getIntent())
                 .toolCalls(mapAiTraces(agentResponse.getToolCalls()))
+                .books(agentResponse.getBooks() == null ? List.of() : agentResponse.getBooks())
                 .build();
     }
 
@@ -52,6 +53,7 @@ public class AiServiceImpl implements AiService {
                 .sessionId(agentResponse.getSessionId())
                 .intent(agentResponse.getIntent())
                 .toolCalls(mapChatbotTraces(agentResponse.getToolCalls()))
+                .books(agentResponse.getBooks() == null ? List.of() : agentResponse.getBooks())
                 .build();
     }
 

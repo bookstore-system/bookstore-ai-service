@@ -1,6 +1,7 @@
 package com.notfound.aiservice.agent.impl;
 
 import com.notfound.aiservice.agent.AiAgentService;
+import com.notfound.aiservice.agent.BookCardExtractor;
 import com.notfound.aiservice.agent.tool.Tool;
 import com.notfound.aiservice.agent.tool.ToolContext;
 import com.notfound.aiservice.agent.tool.ToolRegistry;
@@ -44,6 +45,7 @@ public class AiAgentServiceImpl implements AiAgentService {
     private final ToolRegistry toolRegistry;
     private final GeminiClientService geminiClientService;
     private final GuardrailTool guardrailTool;
+    private final BookCardExtractor bookCardExtractor;
 
     @Value("${ai.agent.max-tool-iterations:4}")
     private int maxToolIterations;
@@ -74,8 +76,14 @@ public class AiAgentServiceImpl implements AiAgentService {
 
             Quy tắc trả lời:
               - Khi đã có dữ liệu từ tool, viết phản hồi tự nhiên bằng tiếng Việt.
-              - Format ngắn gọn, có gạch đầu dòng cho danh sách sách.
-              - Mỗi sách hiển thị: tên, tác giả, giá, rating, trạng thái còn/hết hàng.
+              - GIAO DIỆN sẽ hiển thị card sách (ảnh bìa, tên, giá, rating, nút "Xem chi tiết")
+                ngay phía dưới lời chào của bạn, do field "books" trong response sinh ra.
+              - VÌ VẬY, KHÔNG liệt kê dài dòng danh sách sách trong phần text:
+                  + Tóm tắt ngắn 1-2 câu (vd: "Mình tìm được 5 cuốn phù hợp, bạn xem các card bên dưới nhé.").
+                  + Có thể nhấn 1-2 cuốn nổi bật, kèm 1 câu lý do.
+                  + Không lặp lại giá / rating / link / id - card đã có sẵn các thông tin đó.
+              - Với câu hỏi không tìm/gợi ý sách (review, đơn hàng, mã giảm giá, OOC...):
+                trả lời bình thường, không bắt buộc nhắc tới card.
             """;
 
     @Override
@@ -107,6 +115,7 @@ public class AiAgentServiceImpl implements AiAgentService {
                                     .data(guard)
                                     .build()
                     ))
+                    .books(List.of())
                     .build();
         }
 
@@ -116,6 +125,7 @@ public class AiAgentServiceImpl implements AiAgentService {
                     .intent("CONFIG_ERROR")
                     .response("Gemini API key chưa được cấu hình. Vui lòng set GEMINI_API_KEY.")
                     .toolCalls(List.of())
+                    .books(List.of())
                     .build();
         }
 
@@ -184,11 +194,14 @@ public class AiAgentServiceImpl implements AiAgentService {
 
         updateHistory(sessionId, request.getMessage(), finalAnswer);
 
+        List<com.notfound.aiservice.model.dto.response.BookCard> books = bookCardExtractor.extract(trace);
+
         return AgentChatResponse.builder()
                 .sessionId(sessionId)
                 .intent(detectedIntent == null ? "DIRECT_ANSWER" : detectedIntent)
                 .response(finalAnswer)
                 .toolCalls(trace)
+                .books(books)
                 .build();
     }
 

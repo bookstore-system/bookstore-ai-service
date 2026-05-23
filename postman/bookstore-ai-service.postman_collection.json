@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "a1b2c3d4-ai-service-2026",
     "name": "Bookstore AI Service",
-    "description": "Full API test cho bookstore-ai-service.\n\nBase path: `/api/v1`\nChat đã được gộp với AI Agent — endpoint `/api/v1/chatbot/chat` là endpoint chat duy nhất và có khả năng tool-calling (function calling + multi-step loop).\n\n**Endpoints chính:**\n- `POST /api/v1/chatbot/chat` — Chat AI Agent (trả về `response`, `sessionId`, `intent`, `toolCalls`).\n- `GET  /api/v1/chatbot/tools` — Liệt kê các tool agent đang bật.\n- `POST /api/v1/chatbot/ai` — Chat dạng text đơn giản (vẫn dùng agent bên dưới, response là plain string).\n- `POST /api/v1/chat/ai` — Alias legacy của `/chatbot/ai`.\n- `POST /api/v1/ai/chat` — Chat dùng `AiChatRequest`, cũng đi qua agent.\n- `POST /api/v1/ai/search` — Tìm sách trực tiếp (không qua agent).\n- `GET  /api/v1/ai/report` — Báo cáo đơn hàng + tóm tắt AI.\n\n**Chạy service:**\n- Docker Compose: `http://localhost:8090`\n- Maven local: `http://localhost:8080`\n\n**Phụ thuộc:** `GEMINI_API_KEY`, `BOOK_SERVICE_URL`, `ORDER_SERVICE_URL`, `REVIEW_SERVICE_URL`, `PROMOTION_SERVICE_URL`.",
+    "description": "Full API test cho bookstore-ai-service.\n\nBase path: `/api/v1`\nChat đã được gộp với AI Agent — endpoint `/api/v1/chatbot/chat` là endpoint chat duy nhất và có khả năng tool-calling (function calling + multi-step loop).\n\n**Endpoints chính:**\n- `POST /api/v1/chatbot/chat` — Chat AI Agent (trả về `response`, `sessionId`, `intent`, `toolCalls`, `books`).\n- `GET  /api/v1/chatbot/tools` — Liệt kê các tool agent đang bật.\n- `POST /api/v1/chatbot/ai` — Chat dạng text đơn giản (vẫn dùng agent bên dưới, response là plain string).\n- `POST /api/v1/chat/ai` — Alias legacy của `/chatbot/ai`.\n- `POST /api/v1/ai/chat` — Chat dùng `AiChatRequest`, cũng đi qua agent.\n- `POST /api/v1/ai/search` — Tìm sách trực tiếp (không qua agent).\n- `GET  /api/v1/ai/report` — Báo cáo đơn hàng + tóm tắt AI.\n\n**Field `books` (mới):**\nCard sách chuẩn hoá BE đã gom từ mọi tool (`searchBooksTool`, `stockCheckTool`, `recommendationTool`, `semanticSearchTool`, `compareBooksTool`, `imageScannerTool`). FE chỉ cần đọc `result.books` thay vì parse `toolCalls[].data`.\n\nShape: `[{ id, title, price, discountPrice, mainImageUrl, averageRating, reviewCount, stockQuantity, authorNames, source }]`.\n\n**Chạy service:**\n- Docker Compose: `http://localhost:8090`\n- Maven local: `http://localhost:8080`\n\n**Phụ thuộc:** `GEMINI_API_KEY`, `BOOK_SERVICE_URL`, `ORDER_SERVICE_URL`, `REVIEW_SERVICE_URL`, `PROMOTION_SERVICE_URL`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -93,12 +93,20 @@
                   "    pm.expect(body.result.sessionId).to.be.a('string').that.is.not.empty;",
                   "    pm.expect(body.result.intent).to.be.a('string');",
                   "    pm.expect(body.result.toolCalls).to.be.an('array');",
+                  "    pm.expect(body.result.books).to.be.an('array');",
                   "});",
                   "pm.test('Agent đã gọi searchBooksTool (nếu Gemini hoạt động)', () => {",
                   "    const used = (body.result.toolCalls || []).map(t => t.toolName);",
                   "    if (body.result.intent !== 'CONFIG_ERROR' && body.result.intent !== 'OUT_OF_SCOPE') {",
                   "        pm.expect(used).to.include.oneOf(['searchBooksTool', 'semanticSearchTool']);",
                   "    }",
+                  "});",
+                  "pm.test('books[] có shape BookCard chuẩn hoá', () => {",
+                  "    const books = body.result.books || [];",
+                  "    books.forEach((b) => {",
+                  "        pm.expect(b).to.have.property('id');",
+                  "        pm.expect(b).to.have.property('title');",
+                  "    });",
                   "});",
                   "if (body.result && body.result.sessionId) {",
                   "    pm.collectionVariables.set('sessionId', body.result.sessionId);",
@@ -185,7 +193,14 @@
                 "exec": [
                   "pm.test('Status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.expect(body.result.toolCalls).to.be.an('array');"
+                  "pm.expect(body.result.toolCalls).to.be.an('array');",
+                  "pm.expect(body.result.books).to.be.an('array');",
+                  "pm.test('Mỗi book trong books[] có id + title', () => {",
+                  "    (body.result.books || []).forEach((b) => {",
+                  "        pm.expect(b.id, 'book.id').to.be.a('string').that.is.not.empty;",
+                  "        pm.expect(b.title, 'book.title').to.be.a('string').that.is.not.empty;",
+                  "    });",
+                  "});"
                 ]
               }
             }
@@ -518,6 +533,7 @@
                   "    pm.expect(body.result.response).to.be.a('string').that.is.not.empty;",
                   "    const used = (body.result.toolCalls || []).map(t => t.toolName);",
                   "    pm.expect(used).to.include('guardrailTool');",
+                  "    pm.expect(body.result.books).to.be.an('array').that.is.empty;",
                   "});"
                 ]
               }
@@ -745,6 +761,7 @@
                   "    pm.expect(body.result.response).to.be.a('string');",
                   "    pm.expect(body.result.sessionId).to.be.a('string');",
                   "    pm.expect(body.result.toolCalls).to.be.an('array');",
+                  "    pm.expect(body.result.books).to.be.an('array');",
                   "});",
                   "if (body.result && body.result.sessionId) {",
                   "    pm.collectionVariables.set('sessionId', body.result.sessionId);",

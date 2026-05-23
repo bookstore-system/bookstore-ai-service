@@ -11,6 +11,7 @@ import java.util.Map;
  * tool-calling, response trả thêm:
  *  - intent: tool đầu tiên agent chọn (hoặc DIRECT_ANSWER / OUT_OF_SCOPE).
  *  - toolCalls: trace các tool đã thực thi (tên, tham số, success, data).
+ *  - books: card sách chuẩn hoá để FE render trực tiếp (không cần parse trace).
  */
 @Data
 @Builder
@@ -19,6 +20,7 @@ public class ChatbotResponse {
     private String sessionId;
     private String intent;
     private List<ToolCallTrace> toolCalls;
+    private List<BookCard> books;
 
     @Data
     @Builder
