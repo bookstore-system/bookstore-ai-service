@@ -57,6 +57,7 @@ public class AiAgentServiceImpl implements AiAgentService {
               - Khong lap lai id/link/gia/rating neu card sach da co thong tin do.
               - Khi user hoi voucher/ma giam gia/khuyen mai hien co, hay goi promotionTool ngay ca khi user chua noi gia tri don hang.
               - Khong hoi lai tong gia tri don hang truoc; neu co voucher active thi gioi thieu voucher hien co truoc.
+              - Khi user hoi don hang, chi tra cuu don cua user dang dang nhap bang orderLookupTool; khong hoi/khong dung orderId user nhap.
               - Khi user hoi nha sach co nhung the loai/danh muc/category nao, phai goi categoryTool; khong tu bia danh sach the loai.
               - Khi user muon tim/goi y sach theo mot the loai cu the, phai goi categoryBooksTool de lay sach; khong chi liet ke danh muc roi hoi lai.
             """;
