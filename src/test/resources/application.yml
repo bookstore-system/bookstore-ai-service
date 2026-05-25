@@ -1,10 +1,15 @@
 spring:
   profiles:
     active: test
+  ai:
+    google:
+      genai:
+        api-key: test-gemini-key
+        chat:
+          options:
+            model: gemini-2.5-flash
 
 clients:
-  gemini:
-    url: https://generativelanguage.googleapis.com
   book-service:
     url: http://localhost:8082
   order-service:

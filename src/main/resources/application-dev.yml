@@ -1,11 +1,15 @@
-gemini:
-  api:
-    key: ${GEMINI_API_KEY:}
-  model: ${GEMINI_MODEL:gemini-2.5-flash}
+spring:
+  ai:
+    model:
+      chat: ${SPRING_AI_MODEL_CHAT:none}
+    google:
+      genai:
+        api-key: ${GEMINI_API_KEY:}
+        chat:
+          options:
+            model: ${GEMINI_MODEL:gemini-2.5-flash}
 
 clients:
-  gemini:
-    url: https://generativelanguage.googleapis.com
   book-service:
     url: ${BOOK_SERVICE_URL:http://localhost:8082}
   order-service:
@@ -16,6 +20,11 @@ clients:
     url: ${REVIEW_SERVICE_URL:http://localhost:8087}
 
 ai:
+  provider: ${AI_PROVIDER:groq} # gemini hoac groq
   agent:
-    max-tool-iterations: 4
     enabled-tools: searchBooksTool,recommendationTool,compareBooksTool,reviewSummaryTool,promotionTool,stockCheckTool,semanticSearchTool,imageScannerTool,guardrailTool,orderLookupTool
+
+groq:
+  api:
+    key: ${GROQ_API_KEY:}
+  model: ${GROQ_MODEL:llama-3.3-70b-versatile}
