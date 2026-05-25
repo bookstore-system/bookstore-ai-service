@@ -16,6 +16,8 @@ services:
       SPRING_PROFILES_ACTIVE: dev
       BOOK_SERVICE_URL: http://book-service:8080
       ORDER_SERVICE_URL: http://order-service:8080
+      PROMOTION_SERVICE_URL: http://promotion-service:8080
+      REVIEW_SERVICE_URL: http://review-service:8080
       AI_PROVIDER: ${AI_PROVIDER:-groq}
       SPRING_AI_MODEL_CHAT: ${SPRING_AI_MODEL_CHAT:-none}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}

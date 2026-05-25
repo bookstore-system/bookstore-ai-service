@@ -6,7 +6,10 @@ import com.notfound.aiservice.agent.tool.Tool;
 import com.notfound.aiservice.agent.tool.ToolContext;
 import com.notfound.aiservice.agent.tool.ToolRegistry;
 import com.notfound.aiservice.agent.tool.ToolResult;
+import com.notfound.aiservice.agent.tool.impl.CategoryBooksTool;
+import com.notfound.aiservice.agent.tool.impl.CategoryTool;
 import com.notfound.aiservice.agent.tool.impl.GuardrailTool;
+import com.notfound.aiservice.agent.tool.impl.PromotionTool;
 import com.notfound.aiservice.agent.tool.impl.RecommendationTool;
 import com.notfound.aiservice.agent.tool.impl.SearchBooksTool;
 import com.notfound.aiservice.model.dto.request.AgentChatRequest;
@@ -52,6 +55,10 @@ public class AiAgentServiceImpl implements AiAgentService {
               - Khi co books trong response, giao dien se hien thi card sach rieng.
               - Vi vay khong liet ke dai dong danh sach sach trong phan text; chi tom tat 1-2 cau.
               - Khong lap lai id/link/gia/rating neu card sach da co thong tin do.
+              - Khi user hoi voucher/ma giam gia/khuyen mai hien co, hay goi promotionTool ngay ca khi user chua noi gia tri don hang.
+              - Khong hoi lai tong gia tri don hang truoc; neu co voucher active thi gioi thieu voucher hien co truoc.
+              - Khi user hoi nha sach co nhung the loai/danh muc/category nao, phai goi categoryTool; khong tu bia danh sach the loai.
+              - Khi user muon tim/goi y sach theo mot the loai cu the, phai goi categoryBooksTool de lay sach; khong chi liet ke danh muc roi hoi lai.
             """;
 
     @Override
@@ -68,6 +75,7 @@ public class AiAgentServiceImpl implements AiAgentService {
         ToolContext context = ToolContext.builder()
                 .sessionId(sessionId)
                 .userId(request.getUserId())
+                .authorizationHeader(request.getAuthorizationHeader())
                 .userMessage(effectiveMessage)
                 .attachments(request.getAttachments())
                 .build();
@@ -111,10 +119,11 @@ public class AiAgentServiceImpl implements AiAgentService {
                 trace
         );
 
-        updateHistory(sessionId, request.getMessage(), finalAnswer);
-
         List<BookCard> books = bookCardExtractor.extract(trace);
         boolean recommendationRequest = looksLikeRecommendationRequest(effectiveMessage);
+        boolean promotionRequest = looksLikePromotionRequest(effectiveMessage);
+        boolean categoryRequest = looksLikeCategoryRequest(effectiveMessage);
+        boolean categoryBookSearchRequest = looksLikeCategoryBookSearchRequest(effectiveMessage);
         String relatedSearchKeyword = extractRelatedSearchKeyword(effectiveMessage);
         int requestedLimit = requestedBookLimit(effectiveMessage);
 
@@ -142,6 +151,26 @@ public class AiAgentServiceImpl implements AiAgentService {
                 finalAnswer = buildRecommendationAnswer(books, requestedLimit);
             }
         }
+        if (books.isEmpty() && categoryBookSearchRequest) {
+            String categoryName = extractCategoryName(effectiveMessage);
+            runCategoryBooksFallback(categoryName, context, trace);
+            books = bookCardExtractor.extract(trace);
+            if (!books.isEmpty()) {
+                finalAnswer = buildCategoryBooksAnswer(books, categoryName, requestedLimit);
+            }
+        }
+        if (promotionRequest && trace.stream().noneMatch(t -> PromotionTool.NAME.equals(t.getToolName()))) {
+            runPromotionFallback(context, trace);
+        }
+        if (promotionRequest && trace.stream().anyMatch(t -> PromotionTool.NAME.equals(t.getToolName()))) {
+            finalAnswer = buildPromotionAnswer(trace);
+        }
+        if (!categoryBookSearchRequest && categoryRequest && trace.stream().noneMatch(t -> CategoryTool.NAME.equals(t.getToolName()))) {
+            runCategoryFallback(context, trace);
+        }
+        if (!categoryBookSearchRequest && categoryRequest && trace.stream().anyMatch(t -> CategoryTool.NAME.equals(t.getToolName()))) {
+            finalAnswer = buildCategoryAnswer(trace);
+        }
         if (recommendationRequest && books.size() > requestedLimit) {
             books = books.stream().limit(requestedLimit).toList();
         }
@@ -155,6 +184,8 @@ public class AiAgentServiceImpl implements AiAgentService {
                 books.stream().map(BookCard::getId).toList(),
                 books.stream().map(BookCard::getTitle).toList()
         );
+
+        updateHistory(sessionId, request.getMessage(), finalAnswer);
 
         return AgentChatResponse.builder()
                 .sessionId(sessionId)
@@ -250,6 +281,110 @@ public class AiAgentServiceImpl implements AiAgentService {
         }
         trace.add(AgentChatResponse.ToolCallTrace.builder()
                 .toolName(SearchBooksTool.NAME)
+                .arguments(args)
+                .success(result.isSuccess())
+                .errorMessage(result.getErrorMessage())
+                .data(result.getData())
+                .build());
+    }
+
+    private void runPromotionFallback(
+            ToolContext context,
+            List<AgentChatResponse.ToolCallTrace> trace
+    ) {
+        Tool tool = toolRegistry.get(PromotionTool.NAME).orElse(null);
+        if (tool == null) {
+            log.warn("Promotion fallback skipped: {} is not registered", PromotionTool.NAME);
+            return;
+        }
+
+        Map<String, Object> args = Map.of();
+        ToolResult result;
+        try {
+            result = tool.execute(args, context);
+            log.info(
+                    "Promotion fallback executed: success={}, dataKeys={}",
+                    result.isSuccess(),
+                    result.getData() == null ? List.of() : result.getData().keySet()
+            );
+        } catch (Exception e) {
+            log.warn("Promotion fallback failed", e);
+            result = ToolResult.fail(PromotionTool.NAME, e.getMessage());
+        }
+        trace.add(AgentChatResponse.ToolCallTrace.builder()
+                .toolName(PromotionTool.NAME)
+                .arguments(args)
+                .success(result.isSuccess())
+                .errorMessage(result.getErrorMessage())
+                .data(result.getData())
+                .build());
+    }
+
+    private void runCategoryFallback(
+            ToolContext context,
+            List<AgentChatResponse.ToolCallTrace> trace
+    ) {
+        Tool tool = toolRegistry.get(CategoryTool.NAME).orElse(null);
+        if (tool == null) {
+            log.warn("Category fallback skipped: {} is not registered", CategoryTool.NAME);
+            return;
+        }
+
+        Map<String, Object> args = Map.of();
+        ToolResult result;
+        try {
+            result = tool.execute(args, context);
+            log.info(
+                    "Category fallback executed: success={}, dataKeys={}",
+                    result.isSuccess(),
+                    result.getData() == null ? List.of() : result.getData().keySet()
+            );
+        } catch (Exception e) {
+            log.warn("Category fallback failed", e);
+            result = ToolResult.fail(CategoryTool.NAME, e.getMessage());
+        }
+        trace.add(AgentChatResponse.ToolCallTrace.builder()
+                .toolName(CategoryTool.NAME)
+                .arguments(args)
+                .success(result.isSuccess())
+                .errorMessage(result.getErrorMessage())
+                .data(result.getData())
+                .build());
+    }
+
+    private void runCategoryBooksFallback(
+            String categoryName,
+            ToolContext context,
+            List<AgentChatResponse.ToolCallTrace> trace
+    ) {
+        Tool tool = toolRegistry.get(CategoryBooksTool.NAME).orElse(null);
+        if (tool == null) {
+            log.warn("Category books fallback skipped: {} is not registered", CategoryBooksTool.NAME);
+            return;
+        }
+
+        String resolvedCategoryName = categoryName == null || categoryName.isBlank()
+                ? String.valueOf(context.getUserMessage())
+                : categoryName;
+        Map<String, Object> args = Map.of(
+                "categoryName", resolvedCategoryName,
+                "size", 5
+        );
+        ToolResult result;
+        try {
+            result = tool.execute(args, context);
+            log.info(
+                    "Category books fallback executed: categoryName={}, success={}, dataKeys={}",
+                    categoryName,
+                    result.isSuccess(),
+                    result.getData() == null ? List.of() : result.getData().keySet()
+            );
+        } catch (Exception e) {
+            log.warn("Category books fallback failed", e);
+            result = ToolResult.fail(CategoryBooksTool.NAME, e.getMessage());
+        }
+        trace.add(AgentChatResponse.ToolCallTrace.builder()
+                .toolName(CategoryBooksTool.NAME)
                 .arguments(args)
                 .success(result.isSuccess())
                 .errorMessage(result.getErrorMessage())
@@ -353,6 +488,66 @@ public class AiAgentServiceImpl implements AiAgentService {
         return asksForRecommendation && mentionsBooks;
     }
 
+    private boolean looksLikePromotionRequest(String message) {
+        if (message == null || message.isBlank()) {
+            return false;
+        }
+        String lower = normalizeVietnamese(message.toLowerCase(Locale.ROOT));
+        return lower.contains("voucher")
+                || lower.contains("coupon")
+                || lower.contains("ma giam gia")
+                || lower.contains("giam gia")
+                || lower.contains("khuyen mai")
+                || lower.contains("uu dai");
+    }
+
+    private boolean looksLikeCategoryRequest(String message) {
+        if (message == null || message.isBlank()) {
+            return false;
+        }
+        String lower = normalizeVietnamese(message.toLowerCase(Locale.ROOT));
+        return lower.contains("the loai")
+                || lower.contains("danh muc")
+                || lower.contains("category")
+                || lower.contains("genre")
+                || lower.contains("loai sach")
+                || lower.contains("muc sach");
+    }
+
+    private boolean looksLikeCategoryBookSearchRequest(String message) {
+        if (message == null || message.isBlank()) {
+            return false;
+        }
+        String lower = normalizeVietnamese(message.toLowerCase(Locale.ROOT));
+        boolean asksForBooks = lower.contains("tim sach")
+                || lower.contains("tim kiem sach")
+                || lower.contains("goi y sach")
+                || lower.contains("gioi thieu sach")
+                || lower.contains("sach co the loai")
+                || lower.contains("sach thuoc")
+                || lower.contains("cuon sach");
+        return asksForBooks && looksLikeCategoryRequest(message);
+    }
+
+    private String extractCategoryName(String message) {
+        if (message == null || message.isBlank()) {
+            return "";
+        }
+        String normalized = normalizeVietnamese(message.toLowerCase(Locale.ROOT));
+        for (String marker : List.of("the loai", "danh muc", "category", "genre", "loai sach")) {
+            int index = normalized.lastIndexOf(marker);
+            if (index >= 0) {
+                String raw = message.substring(Math.min(message.length(), index + marker.length())).trim();
+                raw = raw.replaceAll("(?i)^\\s*(la|là|:|-|=|co|có|thuoc|thuộc)\\s+", "").trim();
+                raw = raw.replaceAll("[?!.]+$", "").trim();
+                if (!raw.isBlank()) {
+                    return raw;
+                }
+            }
+        }
+        return message;
+    }
+
     private String extractRelatedSearchKeyword(String message) {
         if (message == null || message.isBlank()) {
             return null;
@@ -394,7 +589,7 @@ public class AiAgentServiceImpl implements AiAgentService {
     private String buildRecommendationAnswer(List<BookCard> books, int requestedLimit) {
         List<BookCard> picked = books.stream().limit(Math.max(1, requestedLimit)).toList();
         if (picked.isEmpty()) {
-            return "Minh chua tim thay sach phu hop de gioi thieu luc nay.";
+            return "Mình chưa tìm thấy sách phù hợp để giới thiệu lúc này.";
         }
         String titles = picked.stream()
                 .map(BookCard::getTitle)
@@ -409,11 +604,196 @@ public class AiAgentServiceImpl implements AiAgentService {
     private String buildRelatedSearchAnswer(List<BookCard> books, String keyword) {
         List<BookCard> picked = books.stream().limit(5).toList();
         if (picked.isEmpty()) {
-            return "Minh chua tim thay sach lien quan den " + keyword + " trong nha sach.";
+            return "Mình chưa tìm thấy sách liên quan đến " + keyword + " trong nhà sách.";
         }
+        return "Mình tìm thấy " + picked.size()
+                + " sách liên quan đến " + keyword
+                + ". Bạn bấm vào card bên dưới để xem chi tiết nhé.";
+    }
+
+    private String buildCategoryBooksAnswer(List<BookCard> books, String categoryName, int requestedLimit) {
+        List<BookCard> picked = books.stream().limit(Math.max(1, requestedLimit)).toList();
+        if (picked.isEmpty()) {
+            return "Minh chua tim thay sach phu hop voi the loai nay.";
+        }
+        String categoryText = categoryName == null || categoryName.isBlank()
+                ? "the loai ban chon"
+                : "the loai " + categoryName;
         return "Minh tim thay " + picked.size()
-                + " sach lien quan den " + keyword
+                + " sach thuoc " + categoryText
                 + ". Ban bam vao card ben duoi de xem chi tiet nhe.";
+    }
+
+    @SuppressWarnings("unchecked")
+    private String buildPromotionAnswer(List<AgentChatResponse.ToolCallTrace> trace) {
+        AgentChatResponse.ToolCallTrace promotionTrace = trace.stream()
+                .filter(t -> PromotionTool.NAME.equals(t.getToolName()))
+                .reduce((first, second) -> second)
+                .orElse(null);
+        if (promotionTrace == null || promotionTrace.getData() == null) {
+            return "Hiện tại nhà sách chưa có voucher/khuyến mãi nào đang áp dụng. Tuy nhiên, bạn có thể kiểm tra lại sau hoặc xem thêm các sách khác mà bạn quan tâm.";
+        }
+
+        Object warning = promotionTrace.getData().get("warning");
+        if (warning != null) {
+            return String.valueOf(warning);
+        }
+
+        Object rawPromotions = promotionTrace.getData().get("activePromotions");
+        if (!(rawPromotions instanceof List<?> rawList) || rawList.isEmpty()) {
+            return "Hiện tại nhà sách chưa có voucher nào đang áp dụng.";
+        }
+
+        List<Map<String, Object>> promotions = rawList.stream()
+                .filter(Map.class::isInstance)
+                .map(item -> (Map<String, Object>) item)
+                .limit(5)
+                .toList();
+        String summaries = promotions.stream()
+                .map(this::promotionSummary)
+                .filter(s -> s != null && !s.isBlank())
+                .toList()
+                .toString();
+        if (summaries.length() <= 2) {
+            return "Mình đã tìm thấy " + rawList.size()
+                    + " voucher đang áp dụng. Bạn có thể vào giỏ hàng để chọn mã phù hợp khi thanh toán.";
+        }
+        return "Hiện tại có " + rawList.size() + " voucher đang áp dụng, gồm: "
+                + summaries.substring(1, summaries.length() - 1)
+                + ". Bạn có thể chọn voucher phù hợp khi thanh toán.";
+    }
+
+    @SuppressWarnings("unchecked")
+    private String buildCategoryAnswer(List<AgentChatResponse.ToolCallTrace> trace) {
+        AgentChatResponse.ToolCallTrace categoryTrace = trace.stream()
+                .filter(t -> CategoryTool.NAME.equals(t.getToolName()))
+                .reduce((first, second) -> second)
+                .orElse(null);
+        if (categoryTrace == null || !categoryTrace.isSuccess() || categoryTrace.getData() == null) {
+            return "Mình chưa lấy được danh sách thể loại sách hiện có lúc này.";
+        }
+
+        Object rawCategories = categoryTrace.getData().get("categories");
+        if (!(rawCategories instanceof List<?> rawList) || rawList.isEmpty()) {
+            return "Hiện tại nhà sách chưa có danh mục/sách nào được phân loại sẵn. Bạn có thể tìm kiếm trực tiếp tên sách hoặc thể loại bạn quan tâm để mình giúp nhé.";
+        }
+
+        List<String> names = rawList.stream()
+                .filter(Map.class::isInstance)
+                .map(item -> (Map<String, Object>) item)
+                .map(category -> firstNonBlank(category, "name", "title"))
+                .filter(name -> name != null && !name.isBlank())
+                .limit(12)
+                .toList();
+        if (names.isEmpty()) {
+            return "Mình tìm thấy " + rawList.size()
+                    + " danh mục sách, nhưng chưa đọc được tên danh mục để hiển thị.";
+        }
+        String joined = names.toString();
+        return "Hiện tại nhà sách đang có " + rawList.size()
+                + " thể loại sách, gồm: "
+                + joined.substring(1, joined.length() - 1)
+                + ". Bạn muốn mình gợi ý sách theo thể loại nào?";
+    }
+
+    private String promotionSummary(Map<String, Object> promotion) {
+        String title = firstNonBlank(promotion, "name", "title", "promotionName", "description");
+        String code = firstNonBlank(promotion, "code", "couponCode", "promotionCode");
+        String discount = promotionDiscountText(promotion);
+        String endDate = firstNonBlank(promotion, "endDate", "expiredAt", "expiresAt");
+        String usage = promotionUsageText(promotion);
+
+        StringBuilder summary = new StringBuilder();
+        if (title != null) {
+            summary.append("\"").append(title).append("\"");
+        } else if (code != null) {
+            summary.append("voucher ").append(code);
+        } else {
+            Object id = promotion.get("promotionID");
+            summary.append(id == null ? "một voucher ưu đãi" : "voucher #" + id);
+        }
+
+        if (code != null) {
+            summary.append(" - mã ").append(code);
+        }
+        if (discount != null) {
+            summary.append(", ").append(discount);
+        }
+        if (endDate != null) {
+            summary.append(", hạn đến ").append(endDate);
+        }
+        // if (usage != null) {
+        //     summary.append(", ").append(usage);
+        // }
+        return summary.toString();
+    }
+
+    private String firstNonBlank(Map<String, Object> promotion, String... keys) {
+        for (String key : keys) {
+            Object value = promotion.get(key);
+            if (value != null && !String.valueOf(value).isBlank()) {
+                return String.valueOf(value);
+            }
+        }
+        return null;
+    }
+
+    private String promotionDiscountText(Map<String, Object> promotion) {
+        Object percent = promotion.get("discountPercent");
+        if (percent == null) {
+            percent = promotion.get("discountPercentage");
+        }
+        if (percent != null) {
+            return "giảm " + trimNumber(percent) + "%";
+        }
+
+        Object value = promotion.get("discountValue");
+        if (value == null) {
+            value = promotion.get("discountAmount");
+        }
+        if (value == null) {
+            return null;
+        }
+
+        String type = firstNonBlank(promotion, "discountType", "type");
+        if (type != null && type.toUpperCase(Locale.ROOT).contains("PERCENT")) {
+            return "giảm " + trimNumber(value) + "%";
+        }
+        return "giảm " + trimNumber(value) + " VND";
+    }
+
+    private String promotionUsageText(Map<String, Object> promotion) {
+        Object usageLimit = promotion.get("usageLimit");
+        if (usageLimit == null) {
+            return null;
+        }
+        Object usageCount = promotion.get("usageCount");
+        if (usageCount == null) {
+            return "giới hạn " + trimNumber(usageLimit) + " lượt";
+        }
+        return "còn khoảng " + Math.max(0, asInt(usageLimit) - asInt(usageCount)) + " lượt";
+    }
+
+    private String trimNumber(Object value) {
+        if (value instanceof Number number) {
+            double d = number.doubleValue();
+            if (d == Math.rint(d)) {
+                return String.valueOf((long) d);
+            }
+            return String.valueOf(d);
+        }
+        return String.valueOf(value);
+    }
+
+    private int asInt(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     private List<String> formatHistory(String sessionId) {

@@ -94,6 +94,7 @@ public class BookCardExtractor {
                 drillPage(toolName, data.get("suggestedBooks"), dedup);
                 drillPage(toolName, data.get("bestSellingBooks"), dedup);
             }
+            case "categoryBooksTool" -> drillPage(toolName, data.get("books"), dedup);
             case "compareBooksTool" -> {
                 Object comparison = data.get("comparison");
                 if (comparison instanceof List<?> list) {
