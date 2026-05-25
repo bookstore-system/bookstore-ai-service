@@ -22,7 +22,7 @@ clients:
 ai:
   provider: ${AI_PROVIDER:groq} # gemini, groq hoac openai-compatible
   agent:
-    enabled-tools: searchBooksTool,recommendationTool,compareBooksTool,reviewSummaryTool,promotionTool,stockCheckTool,semanticSearchTool,imageScannerTool,guardrailTool,orderLookupTool
+    enabled-tools: searchBooksTool,recommendationTool,compareBooksTool,reviewSummaryTool,promotionTool,categoryTool,categoryBooksTool,stockCheckTool,semanticSearchTool,imageScannerTool,guardrailTool,orderLookupTool
 
 groq:
   api:
