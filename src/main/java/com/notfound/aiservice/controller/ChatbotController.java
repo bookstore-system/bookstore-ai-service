@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -27,8 +28,11 @@ public class ChatbotController {
             summary = "Chat with AI Agent",
             description = "Main chatbot endpoint. The agent handles intent detection, tool calls, and response synthesis."
     )
-    public ResponseEntity<ApiResponse<ChatbotResponse>> chat(@Valid @RequestBody ChatbotRequest request) {
-        ChatbotResponse response = aiService.chatbot(request);
+    public ResponseEntity<ApiResponse<ChatbotResponse>> chat(
+            @Valid @RequestBody ChatbotRequest request,
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader
+    ) {
+        ChatbotResponse response = aiService.chatbot(request, authorizationHeader);
         return ResponseEntity.ok(
                 ApiResponse.<ChatbotResponse>builder()
                         .code(1000)

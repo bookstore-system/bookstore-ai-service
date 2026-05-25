@@ -18,5 +18,6 @@ public class AgentChatRequest {
 
     private String sessionId;
     private String userId;
+    private String authorizationHeader;
     private List<AttachmentRequest> attachments;
 }
