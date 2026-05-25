@@ -18,8 +18,8 @@ public class AiServiceImpl implements AiService {
     private final AiAgentService aiAgentService;
 
     @Override
-    public ChatbotResponse chatbot(ChatbotRequest request, String authorizationHeader) {
-        AgentChatResponse agentResponse = aiAgentService.chat(toAgentRequest(request, authorizationHeader));
+    public ChatbotResponse chatbot(ChatbotRequest request, String authorizationHeader, String userIdHeader) {
+        AgentChatResponse agentResponse = aiAgentService.chat(toAgentRequest(request, authorizationHeader, userIdHeader));
         return ChatbotResponse.builder()
                 .response(agentResponse.getResponse())
                 .sessionId(agentResponse.getSessionId())
@@ -29,11 +29,11 @@ public class AiServiceImpl implements AiService {
                 .build();
     }
 
-    private AgentChatRequest toAgentRequest(ChatbotRequest req, String authorizationHeader) {
+    private AgentChatRequest toAgentRequest(ChatbotRequest req, String authorizationHeader, String userIdHeader) {
         AgentChatRequest agent = new AgentChatRequest();
         agent.setMessage(req.getMessage());
         agent.setSessionId(req.getSessionId());
-        agent.setUserId(req.getUserId());
+        agent.setUserId(userIdHeader);
         agent.setAuthorizationHeader(authorizationHeader);
         agent.setAttachments(req.getAttachments());
         return agent;
