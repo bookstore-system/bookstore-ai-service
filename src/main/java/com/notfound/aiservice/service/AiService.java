@@ -4,5 +4,5 @@ import com.notfound.aiservice.model.dto.request.ChatbotRequest;
 import com.notfound.aiservice.model.dto.response.ChatbotResponse;
 
 public interface AiService {
-    ChatbotResponse chatbot(ChatbotRequest request, String authorizationHeader);
+    ChatbotResponse chatbot(ChatbotRequest request, String authorizationHeader, String userIdHeader);
 }

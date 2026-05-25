@@ -30,9 +30,10 @@ public class ChatbotController {
     )
     public ResponseEntity<ApiResponse<ChatbotResponse>> chat(
             @Valid @RequestBody ChatbotRequest request,
-            @RequestHeader(value = "Authorization", required = false) String authorizationHeader
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
+            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader
     ) {
-        ChatbotResponse response = aiService.chatbot(request, authorizationHeader);
+        ChatbotResponse response = aiService.chatbot(request, authorizationHeader, userIdHeader);
         return ResponseEntity.ok(
                 ApiResponse.<ChatbotResponse>builder()
                         .code(1000)

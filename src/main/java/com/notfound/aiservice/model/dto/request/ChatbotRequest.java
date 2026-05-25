@@ -14,8 +14,8 @@ public class ChatbotRequest {
     private String sessionId;
 
     /**
-     * UUID của user (nếu đã đăng nhập). Một số tool agent cần thông tin này
-     * (recommendation cá nhân hoá, tra cứu đơn hàng, ...).
+     * Legacy field from FE. Backend does not trust this for order lookup; user
+     * identity should come from gateway header X-User-Id.
      */
     private String userId;
 
