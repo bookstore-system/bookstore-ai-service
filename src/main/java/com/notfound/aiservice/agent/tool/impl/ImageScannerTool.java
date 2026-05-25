@@ -6,7 +6,7 @@ import com.notfound.aiservice.agent.tool.ToolResult;
 import com.notfound.aiservice.agent.tool.ToolSchema;
 import com.notfound.aiservice.client.BookServiceClient;
 import com.notfound.aiservice.model.dto.request.AttachmentRequest;
-import com.notfound.aiservice.service.impl.GeminiClientService;
+import com.notfound.aiservice.service.AiModelClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -29,7 +29,7 @@ public class ImageScannerTool implements Tool {
 
     public static final String NAME = "imageScannerTool";
 
-    private final GeminiClientService geminiClientService;
+    private final AiModelClient aiModelClient;
     private final BookServiceClient bookServiceClient;
 
     @Override
@@ -78,7 +78,7 @@ public class ImageScannerTool implements Tool {
                     Yêu cầu thêm: %s
                     """.formatted(hint);
 
-            String rawExtraction = geminiClientService.askMultimodal(extractionPrompt, imageAttachments);
+            String rawExtraction = aiModelClient.askMultimodal(extractionPrompt, imageAttachments);
 
             String inferredTitle = guessTitleFromJson(rawExtraction);
 
