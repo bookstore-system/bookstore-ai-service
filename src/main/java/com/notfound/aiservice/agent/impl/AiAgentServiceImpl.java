@@ -6,6 +6,7 @@ import com.notfound.aiservice.agent.tool.Tool;
 import com.notfound.aiservice.agent.tool.ToolContext;
 import com.notfound.aiservice.agent.tool.ToolRegistry;
 import com.notfound.aiservice.agent.tool.ToolResult;
+import com.notfound.aiservice.agent.tool.impl.AddToCartTool;
 import com.notfound.aiservice.agent.tool.impl.CategoryBooksTool;
 import com.notfound.aiservice.agent.tool.impl.CategoryTool;
 import com.notfound.aiservice.agent.tool.impl.GuardrailTool;
@@ -29,6 +30,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
@@ -59,6 +62,7 @@ public class AiAgentServiceImpl implements AiAgentService {
               - Khi user hoi voucher/ma giam gia/khuyen mai hien co, hay goi promotionTool ngay ca khi user chua noi gia tri don hang.
               - Khong hoi lai tong gia tri don hang truoc; neu co voucher active thi gioi thieu voucher hien co truoc.
               - Khi user hoi don hang, chi tra cuu don cua user dang dang nhap bang orderLookupTool; khong hoi/khong dung orderId user nhap.
+              - Khi user muon them sach vao gio hang, phai goi addToCartTool voi ten sach user noi; quantity mac dinh la 1 neu user khong noi.
               - Khi user gui anh bia sach, phai goi imageScannerTool de nhan dien va tim sach trong nha sach.
               - Khi user hoi nha sach co nhung the loai/danh muc/category nao, phai goi categoryTool; khong tu bia danh sach the loai.
               - Khi user muon tim/goi y sach theo mot the loai cu the, phai goi categoryBooksTool de lay sach; khong chi liet ke danh muc roi hoi lai.
@@ -128,6 +132,7 @@ public class AiAgentServiceImpl implements AiAgentService {
         boolean categoryRequest = looksLikeCategoryRequest(effectiveMessage);
         boolean categoryBookSearchRequest = looksLikeCategoryBookSearchRequest(effectiveMessage);
         boolean imageRequest = hasImageAttachment(request);
+        boolean addToCartRequest = looksLikeAddToCartRequest(effectiveMessage);
         String relatedSearchKeyword = extractRelatedSearchKeyword(effectiveMessage);
         int requestedLimit = requestedBookLimit(effectiveMessage);
 
@@ -174,6 +179,14 @@ public class AiAgentServiceImpl implements AiAgentService {
             if (!books.isEmpty()) {
                 finalAnswer = buildCategoryBooksAnswer(books, categoryName, requestedLimit);
             }
+        }
+        if (addToCartRequest && trace.stream().noneMatch(t -> AddToCartTool.NAME.equals(t.getToolName()))) {
+            String productName = extractAddToCartProductName(effectiveMessage);
+            int quantity = extractQuantity(effectiveMessage);
+            runAddToCartFallback(productName, quantity, context, trace);
+        }
+        if (addToCartRequest && trace.stream().anyMatch(t -> AddToCartTool.NAME.equals(t.getToolName()))) {
+            finalAnswer = buildAddToCartAnswer(trace);
         }
         if (promotionRequest && trace.stream().noneMatch(t -> PromotionTool.NAME.equals(t.getToolName()))) {
             runPromotionFallback(context, trace);
@@ -446,6 +459,45 @@ public class AiAgentServiceImpl implements AiAgentService {
                 .build());
     }
 
+    private void runAddToCartFallback(
+            String productName,
+            int quantity,
+            ToolContext context,
+            List<AgentChatResponse.ToolCallTrace> trace
+    ) {
+        Tool tool = toolRegistry.get(AddToCartTool.NAME).orElse(null);
+        if (tool == null) {
+            log.warn("Add-to-cart fallback skipped: {} is not registered", AddToCartTool.NAME);
+            return;
+        }
+
+        Map<String, Object> args = Map.of(
+                "productName", productName == null || productName.isBlank() ? context.getUserMessage() : productName,
+                "quantity", Math.max(1, quantity)
+        );
+        ToolResult result;
+        try {
+            result = tool.execute(args, context);
+            log.info(
+                    "Add-to-cart fallback executed: productName={}, quantity={}, success={}, dataKeys={}",
+                    productName,
+                    quantity,
+                    result.isSuccess(),
+                    result.getData() == null ? List.of() : result.getData().keySet()
+            );
+        } catch (Exception e) {
+            log.warn("Add-to-cart fallback failed", e);
+            result = ToolResult.fail(AddToCartTool.NAME, e.getMessage());
+        }
+        trace.add(AgentChatResponse.ToolCallTrace.builder()
+                .toolName(AddToCartTool.NAME)
+                .arguments(args)
+                .success(result.isSuccess())
+                .errorMessage(result.getErrorMessage())
+                .data(result.getData())
+                .build());
+    }
+
     private String resolveFollowUpMessage(String sessionId, String message) {
         String normalized = normalizeVietnamese(message == null ? "" : message.toLowerCase(Locale.ROOT)).trim();
         if (!isAffirmative(normalized)) {
@@ -553,6 +605,56 @@ public class AiAgentServiceImpl implements AiAgentService {
                 || lower.contains("giam gia")
                 || lower.contains("khuyen mai")
                 || lower.contains("uu dai");
+    }
+
+    private boolean looksLikeAddToCartRequest(String message) {
+        if (message == null || message.isBlank()) {
+            return false;
+        }
+        String lower = normalizeVietnamese(message.toLowerCase(Locale.ROOT));
+        boolean addIntent = lower.contains("them")
+                || lower.contains("bo vao")
+                || lower.contains("cho vao")
+                || lower.contains("dat vao");
+        boolean cartIntent = lower.contains("gio hang")
+                || lower.contains("gio")
+                || lower.contains("cart");
+        return addIntent && cartIntent;
+    }
+
+    private String extractAddToCartProductName(String message) {
+        if (message == null || message.isBlank()) {
+            return "";
+        }
+        String cleaned = message.trim();
+        cleaned = cleaned.replaceAll("(?i)\\b(thêm|them|bỏ|bo|cho|đặt|dat)\\b", " ");
+        cleaned = cleaned.replaceAll("(?i)\\b(vào|vao|giỏ hàng|gio hang|giỏ|gio|cart|hàng|hang|sách|sach|cuốn|cuon|quyển|quyen)\\b", " ");
+        cleaned = cleaned.replaceAll("(?i)\\b(cho tôi|cho toi|giúp tôi|giup toi|giùm tôi|gium toi|với|voi|nhé|nhe)\\b", " ");
+        cleaned = cleaned.replaceAll("(?i)\\b(số lượng|so luong|sl|quantity)\\b\\s*[:=]?\\s*\\d+", " ");
+        cleaned = cleaned.replaceAll("\\b\\d+\\b", " ");
+        cleaned = cleaned.replaceAll("[\"“”'.,!?;:()\\[\\]{}]+", " ");
+        cleaned = cleaned.replaceAll("\\s+", " ").trim();
+        return cleaned;
+    }
+
+    private int extractQuantity(String message) {
+        if (message == null || message.isBlank()) {
+            return 1;
+        }
+        String normalized = normalizeVietnamese(message.toLowerCase(Locale.ROOT));
+        Matcher explicit = Pattern.compile("(?:so luong|sl|quantity)\\s*[:=]?\\s*(\\d+)").matcher(normalized);
+        if (explicit.find()) {
+            return Math.max(1, Integer.parseInt(explicit.group(1)));
+        }
+        Matcher numberWithUnit = Pattern.compile("\\b(\\d+)\\s*(?:cuon|quyen|sach|sp|san pham)?\\b").matcher(normalized);
+        if (numberWithUnit.find()) {
+            return Math.max(1, Integer.parseInt(numberWithUnit.group(1)));
+        }
+        if (normalized.matches(".*\\b(hai|doi|2)\\b.*")) return 2;
+        if (normalized.matches(".*\\b(ba|3)\\b.*")) return 3;
+        if (normalized.matches(".*\\b(bon|4)\\b.*")) return 4;
+        if (normalized.matches(".*\\b(nam|5)\\b.*")) return 5;
+        return 1;
     }
 
     private boolean hasImageAttachment(AgentChatRequest request) {
@@ -678,10 +780,10 @@ public class AiAgentServiceImpl implements AiAgentService {
     private String buildImageScanAnswer(List<BookCard> books) {
         List<BookCard> picked = books.stream().limit(3).toList();
         if (picked.isEmpty()) {
-            return "Minh da phan tich anh nhung chua tim thay sach trung khop trong nha sach.";
+            return "Mình đã phân tích ảnh nhưng chưa tìm thấy sách trùng khớp trong nhà sách.";
         }
-        return "Minh da phan tich anh va tim thay " + picked.size()
-                + " sach co the phu hop. Ban bam vao card ben duoi de xem chi tiet nhe.";
+        return "Mình đã phân tích ảnh và tìm thấy " + picked.size()
+                + " sách có thể phù hợp. Bạn bấm vào card bên dưới để xem chi tiết nhé.";
     }
 
     private String buildImageScanFailureAnswer(List<AgentChatResponse.ToolCallTrace> trace) {
@@ -690,7 +792,7 @@ public class AiAgentServiceImpl implements AiAgentService {
                 .reduce((first, second) -> second)
                 .orElse(null);
         if (imageTrace == null) {
-            return "Minh chua phan tich duoc anh. Ban thu gui lai anh bia sach ro hon nhe.";
+            return "Mình chưa phân tích được ảnh. Bạn thử gửi lại ảnh bìa sách rõ hơn nhe.";
         }
         String error = imageTrace.getErrorMessage();
         if (error != null && error.contains("MULTIMODAL_UNSUPPORTED")) {
@@ -699,24 +801,48 @@ public class AiAgentServiceImpl implements AiAgentService {
         if (imageTrace.getData() != null) {
             Object inferredTitle = imageTrace.getData().get("inferredTitle");
             if (inferredTitle != null && !String.valueOf(inferredTitle).isBlank()) {
-                return "Minh nhan dien duoc ten sach la \"" + inferredTitle
+                return "Mình nhan dien duoc ten sach la \"" + inferredTitle
                         + "\" nhung chua tim thay sach trung khop trong nha sach.";
             }
         }
-        return "Minh da phan tich anh nhung chua nhan dien duoc ten sach ro rang. Ban thu gui anh bia sach ro hon hoac nhap ten sach de minh tim tiep nhe.";
+        return "Mình đã phân tích ảnh nhưng chưa nhận diện được tên sách rõ rang. ạn thử gửi ảnh bìa sách rõ hơn hoặc nhập tên sách để mình tìm tiếp nhe.";
+    }
+
+    private String buildAddToCartAnswer(List<AgentChatResponse.ToolCallTrace> trace) {
+        AgentChatResponse.ToolCallTrace cartTrace = trace.stream()
+                .filter(t -> AddToCartTool.NAME.equals(t.getToolName()))
+                .reduce((first, second) -> second)
+                .orElse(null);
+        if (cartTrace == null) {
+            return "Mình chưa thêm được sách vào giỏ hàng.";
+        }
+        if (!cartTrace.isSuccess()) {
+            String error = cartTrace.getErrorMessage();
+            if (error != null && error.contains("dang nhap")) {
+                return "Bạn cần đăng nhập để thêm sách vào giỏ hàng.";
+            }
+            return "Mình chưa thêm được sách vào giỏ hàng: "
+                    + (error == null || error.isBlank() ? "không tìm thấy sách phù hợp." : error);
+        }
+        Map<String, Object> data = cartTrace.getData();
+        String title = data == null ? null : String.valueOf(data.getOrDefault("title", ""));
+        Object quantity = data == null ? 1 : data.getOrDefault("quantity", 1);
+        String bookText = title == null || title.isBlank() ? "sach nay" : "\"" + title + "\"";
+        return "Mình đã thêm " + quantity + " cuốn " + bookText
+                + " vào giỏ hàng của bạn.";
     }
 
     private String buildCategoryBooksAnswer(List<BookCard> books, String categoryName, int requestedLimit) {
         List<BookCard> picked = books.stream().limit(Math.max(1, requestedLimit)).toList();
         if (picked.isEmpty()) {
-            return "Minh chua tim thay sach phu hop voi the loai nay.";
+            return "Mình chưa tìm thấy sách phù hợp với thể loại này.";
         }
         String categoryText = categoryName == null || categoryName.isBlank()
-                ? "the loai ban chon"
-                : "the loai " + categoryName;
-        return "Minh tim thay " + picked.size()
-                + " sach thuoc " + categoryText
-                + ". Ban bam vao card ben duoi de xem chi tiet nhe.";
+                ? "thể loại này"
+                : "thể loại " + categoryName;
+        return "Mình tìm thấy " + picked.size()
+                + " sách thuộc " + categoryText
+                + ". Bấm vào card bên dưới để xem chi tiết nhé.";
     }
 
     @SuppressWarnings("unchecked")

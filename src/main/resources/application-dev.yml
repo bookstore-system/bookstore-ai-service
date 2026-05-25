@@ -11,18 +11,20 @@ spring:
 
 clients:
   book-service:
-    url: ${BOOK_SERVICE_URL:http://localhost:8082}
+    url: ${BOOK_SERVICE_URL:http://book-service:8080}
   order-service:
-    url: ${ORDER_SERVICE_URL:http://localhost:8084}
+    url: ${ORDER_SERVICE_URL:http://order-service:8080}
+  cart-service:
+    url: ${CART_SERVICE_URL:http://cart-service:8080}
   promotion-service:
-    url: ${PROMOTION_SERVICE_URL:http://localhost:8086}
+    url: ${PROMOTION_SERVICE_URL:http://promotion-service:8080}
   review-service:
-    url: ${REVIEW_SERVICE_URL:http://localhost:8087}
+    url: ${REVIEW_SERVICE_URL:http://review-service:8080}
 
 ai:
   provider: ${AI_PROVIDER:groq} # gemini, groq hoac openai-compatible
   agent:
-    enabled-tools: searchBooksTool,recommendationTool,compareBooksTool,reviewSummaryTool,promotionTool,categoryTool,categoryBooksTool,stockCheckTool,semanticSearchTool,imageScannerTool,guardrailTool,orderLookupTool
+    enabled-tools: searchBooksTool,recommendationTool,compareBooksTool,reviewSummaryTool,promotionTool,categoryTool,categoryBooksTool,stockCheckTool,semanticSearchTool,imageScannerTool,guardrailTool,orderLookupTool,addToCartTool
 
 groq:
   api:

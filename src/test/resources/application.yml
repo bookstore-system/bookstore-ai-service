@@ -14,6 +14,12 @@ clients:
     url: http://localhost:8082
   order-service:
     url: http://localhost:8084
+  cart-service:
+    url: http://localhost:8083
+  promotion-service:
+    url: http://localhost:8086
+  review-service:
+    url: http://localhost:8087
 
 gemini:
   api:
