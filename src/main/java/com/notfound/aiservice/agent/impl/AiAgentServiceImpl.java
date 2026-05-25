@@ -9,6 +9,7 @@ import com.notfound.aiservice.agent.tool.ToolResult;
 import com.notfound.aiservice.agent.tool.impl.CategoryBooksTool;
 import com.notfound.aiservice.agent.tool.impl.CategoryTool;
 import com.notfound.aiservice.agent.tool.impl.GuardrailTool;
+import com.notfound.aiservice.agent.tool.impl.ImageScannerTool;
 import com.notfound.aiservice.agent.tool.impl.PromotionTool;
 import com.notfound.aiservice.agent.tool.impl.RecommendationTool;
 import com.notfound.aiservice.agent.tool.impl.SearchBooksTool;
@@ -58,6 +59,7 @@ public class AiAgentServiceImpl implements AiAgentService {
               - Khi user hoi voucher/ma giam gia/khuyen mai hien co, hay goi promotionTool ngay ca khi user chua noi gia tri don hang.
               - Khong hoi lai tong gia tri don hang truoc; neu co voucher active thi gioi thieu voucher hien co truoc.
               - Khi user hoi don hang, chi tra cuu don cua user dang dang nhap bang orderLookupTool; khong hoi/khong dung orderId user nhap.
+              - Khi user gui anh bia sach, phai goi imageScannerTool de nhan dien va tim sach trong nha sach.
               - Khi user hoi nha sach co nhung the loai/danh muc/category nao, phai goi categoryTool; khong tu bia danh sach the loai.
               - Khi user muon tim/goi y sach theo mot the loai cu the, phai goi categoryBooksTool de lay sach; khong chi liet ke danh muc roi hoi lai.
             """;
@@ -125,6 +127,7 @@ public class AiAgentServiceImpl implements AiAgentService {
         boolean promotionRequest = looksLikePromotionRequest(effectiveMessage);
         boolean categoryRequest = looksLikeCategoryRequest(effectiveMessage);
         boolean categoryBookSearchRequest = looksLikeCategoryBookSearchRequest(effectiveMessage);
+        boolean imageRequest = hasImageAttachment(request);
         String relatedSearchKeyword = extractRelatedSearchKeyword(effectiveMessage);
         int requestedLimit = requestedBookLimit(effectiveMessage);
 
@@ -143,6 +146,18 @@ public class AiAgentServiceImpl implements AiAgentService {
             if (!books.isEmpty()) {
                 finalAnswer = buildRelatedSearchAnswer(books, relatedSearchKeyword);
             }
+        }
+
+        if (imageRequest && trace.stream().noneMatch(t -> ImageScannerTool.NAME.equals(t.getToolName()))) {
+            runImageScannerFallback(effectiveMessage, context, trace);
+            books = bookCardExtractor.extract(trace);
+            if (!books.isEmpty()) {
+                finalAnswer = buildImageScanAnswer(books);
+            }
+        }
+        if (imageRequest && books.isEmpty()
+                && trace.stream().anyMatch(t -> ImageScannerTool.NAME.equals(t.getToolName()))) {
+            finalAnswer = buildImageScanFailureAnswer(trace);
         }
 
         if (books.isEmpty() && recommendationRequest) {
@@ -282,6 +297,44 @@ public class AiAgentServiceImpl implements AiAgentService {
         }
         trace.add(AgentChatResponse.ToolCallTrace.builder()
                 .toolName(SearchBooksTool.NAME)
+                .arguments(args)
+                .success(result.isSuccess())
+                .errorMessage(result.getErrorMessage())
+                .data(result.getData())
+                .build());
+    }
+
+    private void runImageScannerFallback(
+            String message,
+            ToolContext context,
+            List<AgentChatResponse.ToolCallTrace> trace
+    ) {
+        Tool tool = toolRegistry.get(ImageScannerTool.NAME).orElse(null);
+        if (tool == null) {
+            log.warn("Image scanner fallback skipped: {} is not registered", ImageScannerTool.NAME);
+            return;
+        }
+
+        Map<String, Object> args = Map.of(
+                "hint",
+                message == null || message.isBlank()
+                        ? "Hay nhan dien bia sach trong anh va tim sach tuong ung trong nha sach."
+                        : message
+        );
+        ToolResult result;
+        try {
+            result = tool.execute(args, context);
+            log.info(
+                    "Image scanner fallback executed: success={}, dataKeys={}",
+                    result.isSuccess(),
+                    result.getData() == null ? List.of() : result.getData().keySet()
+            );
+        } catch (Exception e) {
+            log.warn("Image scanner fallback failed", e);
+            result = ToolResult.fail(ImageScannerTool.NAME, e.getMessage());
+        }
+        trace.add(AgentChatResponse.ToolCallTrace.builder()
+                .toolName(ImageScannerTool.NAME)
                 .arguments(args)
                 .success(result.isSuccess())
                 .errorMessage(result.getErrorMessage())
@@ -502,6 +555,16 @@ public class AiAgentServiceImpl implements AiAgentService {
                 || lower.contains("uu dai");
     }
 
+    private boolean hasImageAttachment(AgentChatRequest request) {
+        if (request == null || request.getAttachments() == null || request.getAttachments().isEmpty()) {
+            return false;
+        }
+        return request.getAttachments().stream()
+                .anyMatch(a -> a != null
+                        && a.getType() != null
+                        && a.getType().toLowerCase(Locale.ROOT).startsWith("image"));
+    }
+
     private boolean looksLikeCategoryRequest(String message) {
         if (message == null || message.isBlank()) {
             return false;
@@ -610,6 +673,37 @@ public class AiAgentServiceImpl implements AiAgentService {
         return "Mình tìm thấy " + picked.size()
                 + " sách liên quan đến " + keyword
                 + ". Bạn bấm vào card bên dưới để xem chi tiết nhé.";
+    }
+
+    private String buildImageScanAnswer(List<BookCard> books) {
+        List<BookCard> picked = books.stream().limit(3).toList();
+        if (picked.isEmpty()) {
+            return "Minh da phan tich anh nhung chua tim thay sach trung khop trong nha sach.";
+        }
+        return "Minh da phan tich anh va tim thay " + picked.size()
+                + " sach co the phu hop. Ban bam vao card ben duoi de xem chi tiet nhe.";
+    }
+
+    private String buildImageScanFailureAnswer(List<AgentChatResponse.ToolCallTrace> trace) {
+        AgentChatResponse.ToolCallTrace imageTrace = trace.stream()
+                .filter(t -> ImageScannerTool.NAME.equals(t.getToolName()))
+                .reduce((first, second) -> second)
+                .orElse(null);
+        if (imageTrace == null) {
+            return "Minh chua phan tich duoc anh. Ban thu gui lai anh bia sach ro hon nhe.";
+        }
+        String error = imageTrace.getErrorMessage();
+        if (error != null && error.contains("MULTIMODAL_UNSUPPORTED")) {
+            return "Hien tai AI dang chay bang provider khong ho tro doc anh. Vui long chuyen AI_PROVIDER=gemini de minh co the phan tich anh bia sach.";
+        }
+        if (imageTrace.getData() != null) {
+            Object inferredTitle = imageTrace.getData().get("inferredTitle");
+            if (inferredTitle != null && !String.valueOf(inferredTitle).isBlank()) {
+                return "Minh nhan dien duoc ten sach la \"" + inferredTitle
+                        + "\" nhung chua tim thay sach trung khop trong nha sach.";
+            }
+        }
+        return "Minh da phan tich anh nhung chua nhan dien duoc ten sach ro rang. Ban thu gui anh bia sach ro hon hoac nhap ten sach de minh tim tiep nhe.";
     }
 
     private String buildCategoryBooksAnswer(List<BookCard> books, String categoryName, int requestedLimit) {

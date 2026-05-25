@@ -86,6 +86,14 @@ public class GroqClientService implements AiModelClient {
 
     @Override
     public String askMultimodal(String prompt, List<AttachmentRequest> attachments) {
+        if (attachments != null && !attachments.isEmpty()) {
+            log.warn(
+                    "OpenAI-compatible provider '{}' does not send image attachments in askMultimodal; attachments={}",
+                    provider,
+                    attachments.size()
+            );
+            return "MULTIMODAL_UNSUPPORTED: AI provider hien tai khong ho tro phan tich anh trong service nay.";
+        }
         return ask(prompt);
     }
 

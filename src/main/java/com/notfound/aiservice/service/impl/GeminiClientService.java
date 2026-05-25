@@ -93,6 +93,11 @@ public class GeminiClientService implements AiModelClient {
         }
 
         List<Media> media = buildImageMedia(attachments);
+        log.info(
+                "Spring AI multimodal request: attachments={}, media={}",
+                attachments == null ? 0 : attachments.size(),
+                media.size()
+        );
         try {
             return ChatClient.create(chatModel)
                     .prompt()
