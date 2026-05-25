@@ -13,7 +13,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -30,7 +30,7 @@ import java.util.Map;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-@ConditionalOnProperty(name = "ai.provider", havingValue = "groq")
+@ConditionalOnExpression("'${ai.provider:}' == 'groq' || '${ai.provider:}' == 'openai-compatible'")
 public class GroqClientService implements AiModelClient {
 
     private static final int MAX_TOOL_ITERATIONS = 4;
@@ -40,18 +40,22 @@ public class GroqClientService implements AiModelClient {
             .connectTimeout(Duration.ofSeconds(20))
             .build();
 
-    @Value("${groq.api.key:}")
+    @Value("${ai.provider:groq}")
+    private String provider;
+
+    @Value("${openai-compatible.api.key:${groq.api.key:}}")
     private String apiKey;
 
-    @Value("${groq.model:llama-3.3-70b-versatile}")
+    @Value("${openai-compatible.model:${groq.model:llama-3.3-70b-versatile}}")
     private String model;
 
-    @Value("${groq.base-url:https://api.groq.com/openai}")
+    @Value("${openai-compatible.base-url:${groq.base-url:https://api.groq.com/openai}}")
     private String baseUrl;
 
     @PostConstruct
     public void init() {
-        log.info("AI provider active: groq, model={}, configured={}", model, isConfigured());
+        log.info("AI provider active: {}, model={}, baseUrl={}, configured={}",
+                provider, model, normalizedBaseUrl(), isConfigured());
     }
 
     @Override
@@ -67,7 +71,7 @@ public class GroqClientService implements AiModelClient {
     @Override
     public String ask(String prompt) {
         if (!isConfigured()) {
-            return "AI service chua cau hinh Groq API key.";
+            return "AI service chua cau hinh API key.";
         }
         try {
             List<Map<String, Object>> messages = new ArrayList<>();
@@ -75,8 +79,8 @@ public class GroqClientService implements AiModelClient {
             Map<String, Object> response = chatCompletion(messages, List.of());
             return extractContent(response);
         } catch (Exception e) {
-            log.warn("Groq AI ask failed: {}", e.getMessage());
-            return "AI service khong the ket noi Groq: " + e.getMessage();
+            log.warn("OpenAI-compatible AI ask failed: {}", e.getMessage());
+            return "AI service khong the ket noi model: " + e.getMessage();
         }
     }
 
@@ -95,7 +99,7 @@ public class GroqClientService implements AiModelClient {
             List<AgentChatResponse.ToolCallTrace> trace
     ) {
         if (!isConfigured()) {
-            return "AI service chua cau hinh Groq API key.";
+            return "AI service chua cau hinh API key.";
         }
 
         List<Map<String, Object>> messages = new ArrayList<>();
@@ -149,7 +153,7 @@ public class GroqClientService implements AiModelClient {
             }
             return "Minh da thu qua nhieu buoc goi tool nhung chua co cau tra loi cuoi.";
         } catch (Exception e) {
-            log.warn("Groq AI chatWithTools failed: {}", e.getMessage());
+            log.warn("OpenAI-compatible AI chatWithTools failed: {}", e.getMessage());
             return "AI service loi: " + e.getMessage();
         }
     }
@@ -168,7 +172,7 @@ public class GroqClientService implements AiModelClient {
         }
 
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(normalizedBaseUrl() + "/v1/chat/completions"))
+                .uri(URI.create(chatCompletionsUrl()))
                 .timeout(Duration.ofSeconds(60))
                 .header("Authorization", "Bearer " + apiKey)
                 .header("Content-Type", "application/json")
@@ -177,9 +181,17 @@ public class GroqClientService implements AiModelClient {
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException("Groq API error " + response.statusCode() + ": " + response.body());
+            throw new IllegalStateException("AI API error " + response.statusCode() + ": " + response.body());
         }
         return objectMapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+    }
+
+    private String chatCompletionsUrl() {
+        String value = normalizedBaseUrl();
+        if (value.endsWith("/v1/chat/completions")) {
+            return value;
+        }
+        return value + "/v1/chat/completions";
     }
 
     private String normalizedBaseUrl() {

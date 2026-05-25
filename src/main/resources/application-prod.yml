@@ -20,9 +20,16 @@ clients:
     url: ${REVIEW_SERVICE_URL:http://localhost:8087}
 
 ai:
-  provider: ${AI_PROVIDER:gemini} # gemini hoac groq
+  provider: ${AI_PROVIDER:gemini} # gemini, groq hoac openai-compatible
 
 groq:
   api:
     key: ${GROQ_API_KEY}
   model: ${GROQ_MODEL:llama-3.3-70b-versatile}
+  base-url: ${GROQ_BASE_URL:https://api.groq.com/openai}
+
+openai-compatible:
+  api:
+    key: ${AI_API_KEY:${GROQ_API_KEY:}}
+  model: ${AI_MODEL:${GROQ_MODEL:deepseek-v4-flash}}
+  base-url: ${AI_BASE_URL:https://ds2api-yr0a.onrender.com}
