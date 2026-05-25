@@ -1,11 +1,13 @@
 package com.notfound.aiservice.service.impl;
 
+import com.notfound.aiservice.agent.AiAgentService;
 import com.notfound.aiservice.client.BookServiceClient;
 import com.notfound.aiservice.client.OrderServiceClient;
+import com.notfound.aiservice.model.dto.request.AgentChatRequest;
 import com.notfound.aiservice.model.dto.request.AiChatRequest;
 import com.notfound.aiservice.model.dto.request.AiSearchRequest;
-import com.notfound.aiservice.model.dto.request.AttachmentRequest;
 import com.notfound.aiservice.model.dto.request.ChatbotRequest;
+import com.notfound.aiservice.model.dto.response.AgentChatResponse;
 import com.notfound.aiservice.model.dto.response.AiChatResponse;
 import com.notfound.aiservice.model.dto.response.AiReportResponse;
 import com.notfound.aiservice.model.dto.response.ChatbotResponse;
@@ -13,44 +15,46 @@ import com.notfound.aiservice.service.AiService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Sau khi gộp agent vào chat, mọi luồng "chat" đều đi qua {@link AiAgentService}
+ * để tận dụng tool-calling. Service này chỉ còn trách nhiệm:
+ *  - Adapt request/response DTO giữa controller cũ (chat/chatbot) và agent.
+ *  - Giữ các tác vụ không phải chat: search trực tiếp, report đơn hàng.
+ */
 @Service
 @RequiredArgsConstructor
 public class AiServiceImpl implements AiService {
+
+    private final AiAgentService aiAgentService;
     private final GeminiClientService geminiClientService;
     private final BookServiceClient bookServiceClient;
     private final OrderServiceClient orderServiceClient;
-    private final Map<String, List<String>> chatHistoryBySession = new ConcurrentHashMap<>();
-    private static final int MAX_HISTORY_MESSAGES = 20;
 
     @Override
     public AiChatResponse chat(AiChatRequest request) {
-        String sessionId = request.getSessionId() == null || request.getSessionId().isBlank()
-                ? UUID.randomUUID().toString()
-                : request.getSessionId();
-
-        String prompt = buildPromptWithHistory(sessionId, request.getMessage(), null);
-        String answer = geminiClientService.ask(prompt);
-        updateHistory(sessionId, request.getMessage(), answer);
-        return AiChatResponse.builder().response(answer).sessionId(sessionId).build();
+        AgentChatResponse agentResponse = aiAgentService.chat(toAgentRequest(request));
+        return AiChatResponse.builder()
+                .response(agentResponse.getResponse())
+                .sessionId(agentResponse.getSessionId())
+                .intent(agentResponse.getIntent())
+                .toolCalls(mapAiTraces(agentResponse.getToolCalls()))
+                .books(agentResponse.getBooks() == null ? List.of() : agentResponse.getBooks())
+                .build();
     }
 
     @Override
     public ChatbotResponse chatbot(ChatbotRequest request) {
-        String sessionId = request.getSessionId() == null || request.getSessionId().isBlank()
-                ? UUID.randomUUID().toString()
-                : request.getSessionId();
-        String message = request.getMessage() == null ? "" : request.getMessage();
-
-        String prompt = buildPromptWithHistory(sessionId, message, request.getAttachments());
-        String answer = geminiClientService.ask(prompt);
-        updateHistory(sessionId, message, answer);
-        return ChatbotResponse.builder().response(answer).sessionId(sessionId).build();
+        AgentChatResponse agentResponse = aiAgentService.chat(toAgentRequest(request));
+        return ChatbotResponse.builder()
+                .response(agentResponse.getResponse())
+                .sessionId(agentResponse.getSessionId())
+                .intent(agentResponse.getIntent())
+                .toolCalls(mapChatbotTraces(agentResponse.getToolCalls()))
+                .books(agentResponse.getBooks() == null ? List.of() : agentResponse.getBooks())
+                .build();
     }
 
     @Override
@@ -73,53 +77,47 @@ public class AiServiceImpl implements AiService {
                 .build();
     }
 
-    private String buildPromptWithHistory(String sessionId, String message, List<AttachmentRequest> attachments) {
-        StringBuilder prompt = new StringBuilder();
-        prompt.append("Bạn là BookBot cho hệ thống bán sách. ")
-                .append("Trả lời bằng tiếng Việt, thân thiện, không markdown, không bịa thông tin.\n");
-
-        List<String> history = chatHistoryBySession.getOrDefault(sessionId, List.of());
-        if (!history.isEmpty()) {
-            prompt.append("Lịch sử hội thoại gần đây:\n");
-            for (String line : history) {
-                prompt.append(line).append('\n');
-            }
-        }
-
-        prompt.append("Tin nhắn hiện tại: ").append(message).append('\n');
-
-        if (attachments != null && !attachments.isEmpty()) {
-            prompt.append("Đính kèm:\n");
-            for (AttachmentRequest attachment : attachments) {
-                if (attachment == null) {
-                    continue;
-                }
-                prompt.append("- type=").append(attachment.getType());
-                if (attachment.getName() != null) {
-                    prompt.append(", name=").append(attachment.getName());
-                }
-                if (attachment.getUrl() != null) {
-                    prompt.append(", url=").append(attachment.getUrl());
-                }
-                if (attachment.getLocation() != null) {
-                    prompt.append(", location=").append(
-                            attachment.getLocation().getAddress() != null
-                                    ? attachment.getLocation().getAddress()
-                                    : (attachment.getLocation().getLat() + "," + attachment.getLocation().getLng())
-                    );
-                }
-                prompt.append('\n');
-            }
-        }
-        return prompt.toString();
+    private AgentChatRequest toAgentRequest(ChatbotRequest req) {
+        AgentChatRequest agent = new AgentChatRequest();
+        agent.setMessage(req.getMessage());
+        agent.setSessionId(req.getSessionId());
+        agent.setUserId(req.getUserId());
+        agent.setAttachments(req.getAttachments());
+        return agent;
     }
 
-    private void updateHistory(String sessionId, String userMessage, String aiMessage) {
-        List<String> history = chatHistoryBySession.computeIfAbsent(sessionId, key -> new ArrayList<>());
-        history.add("User: " + userMessage);
-        history.add("Assistant: " + aiMessage);
-        while (history.size() > MAX_HISTORY_MESSAGES) {
-            history.remove(0);
-        }
+    private AgentChatRequest toAgentRequest(AiChatRequest req) {
+        AgentChatRequest agent = new AgentChatRequest();
+        agent.setMessage(req.getMessage());
+        agent.setSessionId(req.getSessionId());
+        agent.setUserId(req.getUserId());
+        agent.setAttachments(req.getAttachments());
+        return agent;
+    }
+
+    private List<ChatbotResponse.ToolCallTrace> mapChatbotTraces(List<AgentChatResponse.ToolCallTrace> traces) {
+        if (traces == null) return List.of();
+        return traces.stream()
+                .map(t -> ChatbotResponse.ToolCallTrace.builder()
+                        .toolName(t.getToolName())
+                        .arguments(t.getArguments())
+                        .success(t.isSuccess())
+                        .errorMessage(t.getErrorMessage())
+                        .data(t.getData())
+                        .build())
+                .toList();
+    }
+
+    private List<AiChatResponse.ToolCallTrace> mapAiTraces(List<AgentChatResponse.ToolCallTrace> traces) {
+        if (traces == null) return List.of();
+        return traces.stream()
+                .map(t -> AiChatResponse.ToolCallTrace.builder()
+                        .toolName(t.getToolName())
+                        .arguments(t.getArguments())
+                        .success(t.isSuccess())
+                        .errorMessage(t.getErrorMessage())
+                        .data(t.getData())
+                        .build())
+                .toList();
     }
 }
