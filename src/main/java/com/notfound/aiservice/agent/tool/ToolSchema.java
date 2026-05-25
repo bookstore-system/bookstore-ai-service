@@ -8,8 +8,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Mô tả khai báo (schema) của một tool dùng cho Gemini Function Calling.
- * Cấu trúc tương thích với phần `functionDeclarations` của Gemini API.
+ * Tool declaration schema used by the AI model client.
  */
 @Data
 @Builder

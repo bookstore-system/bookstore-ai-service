@@ -33,12 +33,20 @@ public class BookCardExtractor {
     private static final int MAX_CARDS = 12;
 
     public List<BookCard> extract(List<AgentChatResponse.ToolCallTrace> traces) {
-        if (traces == null || traces.isEmpty()) return List.of();
+        if (traces == null || traces.isEmpty()) {
+            log.info("BookCardExtractor: no tool traces, books=0");
+            return List.of();
+        }
 
         LinkedHashMap<String, BookCard> dedup = new LinkedHashMap<>();
         for (AgentChatResponse.ToolCallTrace t : traces) {
             if (t == null || !t.isSuccess() || t.getData() == null) continue;
             try {
+                log.info(
+                        "BookCardExtractor: reading tool={}, dataKeys={}",
+                        t.getToolName(),
+                        t.getData().keySet()
+                );
                 extractFromOne(t.getToolName(), t.getData(), dedup);
             } catch (Exception e) {
                 log.debug("BookCardExtractor: failed to read tool {} data: {}",
@@ -46,6 +54,12 @@ public class BookCardExtractor {
             }
             if (dedup.size() >= MAX_CARDS) break;
         }
+        log.info(
+                "BookCardExtractor: extracted books={}, ids={}, titles={}",
+                dedup.size(),
+                dedup.values().stream().map(BookCard::getId).toList(),
+                dedup.values().stream().map(BookCard::getTitle).toList()
+        );
         return new ArrayList<>(dedup.values());
     }
 
@@ -104,39 +118,60 @@ public class BookCardExtractor {
      */
     private void drillPage(String toolName, Object payload,
                            LinkedHashMap<String, BookCard> dedup) {
-        if (payload == null) return;
+        drillAny(toolName, payload, dedup, 0);
+    }
+
+    private void drillAny(String toolName, Object payload,
+                          LinkedHashMap<String, BookCard> dedup,
+                          int depth) {
+        if (payload == null || dedup.size() >= MAX_CARDS || depth > 8) return;
 
         if (payload instanceof Collection<?> coll) {
-            for (Object item : coll) pushBook(toolName, item, dedup);
+            for (Object item : coll) {
+                drillAny(toolName, item, dedup, depth + 1);
+                if (dedup.size() >= MAX_CARDS) return;
+            }
             return;
         }
 
         if (payload instanceof Map<?, ?> map) {
-            Object result = map.get("result");
-            if (result != null && !(result instanceof Map<?, ?>) && !(result instanceof List<?>)) {
-                result = map;
-            }
-            Object effective = result != null ? result : map;
-
-            if (effective instanceof Map<?, ?> effMap) {
-                Object content = effMap.get("content");
-                if (content instanceof Collection<?> coll) {
-                    for (Object item : coll) pushBook(toolName, item, dedup);
-                    return;
-                }
-                if (looksLikeBook(effMap)) {
-                    pushBook(toolName, effMap, dedup);
-                }
+            if (looksLikeBook(map)) {
+                pushBook(toolName, map, dedup);
                 return;
             }
-            if (effective instanceof Collection<?> coll) {
-                for (Object item : coll) pushBook(toolName, item, dedup);
+
+            for (String key : List.of(
+                    "result",
+                    "data",
+                    "content",
+                    "books",
+                    "items",
+                    "records",
+                    "suggestedBooks",
+                    "bestSellingBooks"
+            )) {
+                if (map.containsKey(key)) {
+                    drillAny(toolName, map.get(key), dedup, depth + 1);
+                    if (dedup.size() >= MAX_CARDS) return;
+                }
+            }
+
+            for (Object value : map.values()) {
+                if (value instanceof Map<?, ?> || value instanceof Collection<?>) {
+                    drillAny(toolName, value, dedup, depth + 1);
+                    if (dedup.size() >= MAX_CARDS) return;
+                }
             }
         }
     }
 
     private boolean looksLikeBook(Map<?, ?> map) {
-        return map.containsKey("id") && map.containsKey("title");
+        return map.containsKey("id") && firstNonBlank(
+                map.get("title"),
+                map.get("bookTitle"),
+                map.get("name"),
+                map.get("bookName")
+        ) != null;
     }
 
     private void pushBook(String toolName, Object raw,
@@ -145,7 +180,12 @@ public class BookCardExtractor {
         if (dedup.size() >= MAX_CARDS) return;
 
         String id = asString(book.get("id"));
-        String title = asString(book.get("title"));
+        String title = firstNonBlank(
+                book.get("title"),
+                book.get("bookTitle"),
+                book.get("name"),
+                book.get("bookName")
+        );
         if (id == null || id.isBlank() || title == null || title.isBlank()) return;
         if (dedup.containsKey(id)) return;
 
@@ -180,6 +220,17 @@ public class BookCardExtractor {
     private static String asString(Object v) {
         if (v == null) return null;
         return String.valueOf(v);
+    }
+
+    private static String firstNonBlank(Object... values) {
+        if (values == null) return null;
+        for (Object value : values) {
+            String s = asString(value);
+            if (s != null && !s.isBlank()) {
+                return s;
+            }
+        }
+        return null;
     }
 
     private static Double asDouble(Object v) {
