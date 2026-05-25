@@ -1,12 +1,30 @@
 package com.notfound.aiservice.service.impl;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.notfound.aiservice.agent.tool.Tool;
+import com.notfound.aiservice.agent.tool.ToolContext;
+import com.notfound.aiservice.agent.tool.ToolResult;
 import com.notfound.aiservice.agent.tool.ToolSchema;
-import com.notfound.aiservice.client.GeminiGenerateContentClient;
 import com.notfound.aiservice.model.dto.request.AttachmentRequest;
+import com.notfound.aiservice.model.dto.response.AgentChatResponse;
+import com.notfound.aiservice.service.AiModelClient;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.content.Media;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.definition.DefaultToolDefinition;
+import org.springframework.ai.tool.definition.ToolDefinition;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.stereotype.Service;
+import org.springframework.util.MimeType;
+import org.springframework.util.MimeTypeUtils;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -19,136 +37,149 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Lớp tích hợp với Gemini API:
- *  - ask(prompt): hỏi text đơn giản (giữ tương thích cũ)
- *  - askMultimodal: gửi kèm ảnh (CS-13)
- *  - generateWithTools: gửi prompt + tool schema (function calling) → trả về raw response
- *
- * Service tách phần xây dựng request và parse response để Orchestrator
- * có thể chạy vòng lặp nhiều bước (multi-step tool use).
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class GeminiClientService {
+@ConditionalOnProperty(name = "ai.provider", havingValue = "gemini", matchIfMissing = true)
+public class GeminiClientService implements AiModelClient {
 
-    private final GeminiGenerateContentClient geminiGenerateContentClient;
+    private final ObjectProvider<ChatModel> chatModelProvider;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    @Value("${gemini.api.key:}")
+    @Value("${spring.ai.google.genai.api-key:${gemini.api.key:}}")
     private String apiKey;
 
-    @Value("${gemini.model:gemini-2.5-flash}")
+    @Value("${spring.ai.google.genai.chat.options.model:${gemini.model:gemini-2.5-flash}}")
     private String model;
 
+    @PostConstruct
+    void init() {
+        log.info("AI provider active: gemini, model={}, configured={}", model, isConfigured());
+    }
+
+    @Override
     public String getModel() {
         return model;
     }
 
+    @Override
     public boolean isConfigured() {
         return apiKey != null && !apiKey.isBlank();
     }
 
-    /** Helper text-only đơn giản. */
+    @Override
     public String ask(String prompt) {
-        if (!isConfigured()) {
-            return "Gemini API key chưa được cấu hình. Vui lòng set GEMINI_API_KEY để dùng chat AI.";
+        ChatModel chatModel = chatModelProvider.getIfAvailable();
+        if (chatModel == null) {
+            return "AI service chua cau hinh Spring AI ChatModel.";
         }
-        Map<String, Object> body = Map.of(
-                "contents", List.of(
-                        Map.of("role", "user", "parts", List.of(Map.of("text", prompt)))
-                )
-        );
         try {
-            Map<String, Object> response = geminiGenerateContentClient.generateContent(model, apiKey, body);
-            return extractText(response);
+            return ChatClient.create(chatModel)
+                    .prompt()
+                    .user(prompt)
+                    .call()
+                    .content();
         } catch (Exception e) {
-            log.warn("Gemini ask failed: {}", e.getMessage());
-            return "AI service không thể kết nối Gemini: " + e.getMessage();
+            log.warn("Spring AI ask failed: {}", e.getMessage());
+            return "AI service khong the ket noi Gemini: " + e.getMessage();
         }
     }
 
-    /** Gọi Gemini với ảnh đính kèm. */
+    @Override
     public String askMultimodal(String prompt, List<AttachmentRequest> attachments) {
-        if (!isConfigured()) {
-            return "Gemini API key chưa được cấu hình.";
+        ChatModel chatModel = chatModelProvider.getIfAvailable();
+        if (chatModel == null) {
+            return "AI service chua cau hinh Spring AI ChatModel.";
         }
-        List<Map<String, Object>> parts = new ArrayList<>();
-        parts.add(Map.of("text", prompt));
-        if (attachments != null) {
-            for (AttachmentRequest a : attachments) {
-                if (a == null || a.getType() == null) continue;
-                if (!a.getType().toLowerCase().startsWith("image")) continue;
-                Map<String, Object> inlineData = buildInlineImagePart(a);
-                if (inlineData != null) {
-                    parts.add(Map.of("inlineData", inlineData));
-                }
-            }
-        }
-        Map<String, Object> body = Map.of(
-                "contents", List.of(Map.of("role", "user", "parts", parts))
-        );
+
+        List<Media> media = buildImageMedia(attachments);
         try {
-            Map<String, Object> response = geminiGenerateContentClient.generateContent(model, apiKey, body);
-            return extractText(response);
+            return ChatClient.create(chatModel)
+                    .prompt()
+                    .user(u -> {
+                        u.text(prompt);
+                        if (!media.isEmpty()) {
+                            u.media(media.toArray(Media[]::new));
+                        }
+                    })
+                    .call()
+                    .content();
         } catch (Exception e) {
-            log.warn("Gemini multimodal failed: {}", e.getMessage());
-            return "AI service không xử lý được ảnh: " + e.getMessage();
+            log.warn("Spring AI multimodal failed: {}", e.getMessage());
+            return "AI service khong xu ly duoc anh: " + e.getMessage();
         }
     }
 
-    /**
-     * Gửi prompt + tool schema cho Gemini và trả về raw response.
-     * Caller (Orchestrator) tự parse phần `functionCall` để biết tool nào cần gọi.
-     */
-    public Map<String, Object> generateWithTools(
-            List<Map<String, Object>> contents,
-            Collection<ToolSchema> tools
+    @Override
+    public String chatWithTools(
+            String systemPrompt,
+            List<String> historyMessages,
+            String userMessage,
+            Collection<Tool> tools,
+            ToolContext context,
+            List<AgentChatResponse.ToolCallTrace> trace
     ) {
-        if (!isConfigured()) {
-            return Map.of("error", "Gemini API key chưa được cấu hình.");
+        ChatModel chatModel = chatModelProvider.getIfAvailable();
+        if (chatModel == null) {
+            return "AI service chua cau hinh Spring AI ChatModel.";
         }
 
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("contents", contents);
-
-        if (tools != null && !tools.isEmpty()) {
-            List<Map<String, Object>> functionDeclarations = new ArrayList<>();
-            for (ToolSchema schema : tools) {
-                functionDeclarations.add(toFunctionDeclaration(schema));
-            }
-            body.put("tools", List.of(Map.of("functionDeclarations", functionDeclarations)));
-            body.put("toolConfig", Map.of(
-                    "functionCallingConfig", Map.of("mode", "AUTO")
-            ));
-        }
+        String prompt = buildUserPrompt(historyMessages, userMessage);
+        List<ToolCallback> callbacks = tools == null
+                ? List.of()
+                : tools.stream()
+                .map(tool -> new AgentToolCallback(tool, context, trace))
+                .map(ToolCallback.class::cast)
+                .toList();
 
         try {
-            return geminiGenerateContentClient.generateContent(model, apiKey, body);
+            return ChatClient.create(chatModel)
+                    .prompt()
+                    .system(systemPrompt)
+                    .user(prompt)
+                    .toolCallbacks(callbacks)
+                    .call()
+                    .content();
         } catch (Exception e) {
-            log.warn("Gemini generateWithTools failed: {}", e.getMessage());
-            return Map.of("error", e.getMessage());
+            log.warn("Spring AI chatWithTools failed: {}", e.getMessage());
+            return "AI service loi: " + e.getMessage();
         }
     }
 
-    /** Convert ToolSchema → Gemini functionDeclaration JSON. */
-    private Map<String, Object> toFunctionDeclaration(ToolSchema schema) {
+    private String buildUserPrompt(List<String> historyMessages, String userMessage) {
+        StringBuilder prompt = new StringBuilder();
+        if (historyMessages != null && !historyMessages.isEmpty()) {
+            prompt.append("Ngu canh hoi thoai gan day:\n");
+            for (String h : historyMessages) {
+                prompt.append("- ").append(h).append('\n');
+            }
+            prompt.append("\nTin nhan hien tai:\n");
+        }
+        prompt.append(userMessage == null ? "" : userMessage);
+        return prompt.toString();
+    }
+
+    private Map<String, Object> toInputSchemaMap(ToolSchema schema) {
         Map<String, Object> properties = new LinkedHashMap<>();
         if (schema.getParameters() != null) {
             schema.getParameters().forEach((k, v) -> properties.put(k, toJsonSchema(v)));
         }
-        Map<String, Object> parameters = new LinkedHashMap<>();
-        parameters.put("type", "object");
-        parameters.put("properties", properties);
+        Map<String, Object> inputSchema = new LinkedHashMap<>();
+        inputSchema.put("type", "object");
+        inputSchema.put("properties", properties);
         if (schema.getRequired() != null && !schema.getRequired().isEmpty()) {
-            parameters.put("required", schema.getRequired());
+            inputSchema.put("required", schema.getRequired());
         }
+        return inputSchema;
+    }
 
-        Map<String, Object> decl = new LinkedHashMap<>();
-        decl.put("name", schema.getName());
-        decl.put("description", schema.getDescription());
-        decl.put("parameters", parameters);
-        return decl;
+    private String toInputSchemaJson(ToolSchema schema) {
+        try {
+            return objectMapper.writeValueAsString(toInputSchemaMap(schema));
+        } catch (Exception e) {
+            log.warn("Cannot serialize tool schema {}", schema.getName(), e);
+            return "{\"type\":\"object\",\"properties\":{}}";
+        }
     }
 
     private Map<String, Object> toJsonSchema(ToolSchema.ParameterSchema p) {
@@ -162,32 +193,120 @@ public class GeminiClientService {
         return node;
     }
 
-    /** Lấy ảnh thành base64 (giới hạn 4MB, đủ cho ảnh bìa sách). */
-    private Map<String, Object> buildInlineImagePart(AttachmentRequest a) {
-        try {
-            String mime = "image/jpeg";
-            if (a.getType() != null && a.getType().contains("/")) {
-                mime = a.getType();
-            } else if (a.getName() != null && a.getName().toLowerCase().endsWith(".png")) {
-                mime = "image/png";
+    private class AgentToolCallback implements ToolCallback {
+        private final Tool tool;
+        private final ToolContext context;
+        private final List<AgentChatResponse.ToolCallTrace> trace;
+        private final ToolDefinition definition;
+
+        AgentToolCallback(Tool tool, ToolContext context, List<AgentChatResponse.ToolCallTrace> trace) {
+            this.tool = tool;
+            this.context = context;
+            this.trace = trace;
+            ToolSchema schema = tool.getSchema();
+            this.definition = DefaultToolDefinition.builder()
+                    .name(tool.getName())
+                    .description(schema.getDescription())
+                    .inputSchema(toInputSchemaJson(schema))
+                    .build();
+        }
+
+        @Override
+        public ToolDefinition getToolDefinition() {
+            return definition;
+        }
+
+        @Override
+        public String call(String input) {
+            Map<String, Object> args = parseToolArguments(input);
+            ToolResult result;
+            try {
+                result = tool.execute(args, context);
+            } catch (Exception e) {
+                log.warn("Tool {} failed", tool.getName(), e);
+                result = ToolResult.fail(tool.getName(), e.getMessage());
             }
 
-            String base64Data = null;
+            synchronized (trace) {
+                trace.add(AgentChatResponse.ToolCallTrace.builder()
+                        .toolName(tool.getName())
+                        .arguments(args)
+                        .success(result.isSuccess())
+                        .errorMessage(result.getErrorMessage())
+                        .data(result.getData())
+                        .build());
+            }
+
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("success", result.isSuccess());
+            if (result.isSuccess()) {
+                response.put("data", result.getData() == null ? Map.of() : result.getData());
+            } else {
+                response.put("error", result.getErrorMessage());
+            }
+            return writeJson(response);
+        }
+
+        private Map<String, Object> parseToolArguments(String input) {
+            if (input == null || input.isBlank()) {
+                return Map.of();
+            }
+            try {
+                return objectMapper.readValue(input, new TypeReference<Map<String, Object>>() {});
+            } catch (Exception e) {
+                log.warn("Cannot parse tool arguments for {}: {}", tool.getName(), e.getMessage());
+                return Map.of();
+            }
+        }
+
+        private String writeJson(Map<String, Object> value) {
+            try {
+                return objectMapper.writeValueAsString(value);
+            } catch (Exception e) {
+                return String.valueOf(value);
+            }
+        }
+    }
+
+    private List<Media> buildImageMedia(List<AttachmentRequest> attachments) {
+        if (attachments == null || attachments.isEmpty()) {
+            return List.of();
+        }
+        List<Media> media = new ArrayList<>();
+        for (AttachmentRequest a : attachments) {
+            if (a == null || a.getType() == null || !a.getType().toLowerCase().startsWith("image")) {
+                continue;
+            }
+            byte[] bytes = imageBytes(a);
+            if (bytes == null || bytes.length == 0) {
+                continue;
+            }
+            MimeType mimeType = a.getType().contains("/")
+                    ? MimeTypeUtils.parseMimeType(a.getType())
+                    : MimeTypeUtils.IMAGE_JPEG;
+            media.add(Media.builder()
+                    .mimeType(mimeType)
+                    .data(new NamedByteArrayResource(bytes, a.getName()))
+                    .name(a.getName())
+                    .build());
+        }
+        return media;
+    }
+
+    private byte[] imageBytes(AttachmentRequest a) {
+        try {
             if (a.getUrl() != null && a.getUrl().startsWith("data:")) {
                 int commaIdx = a.getUrl().indexOf(',');
                 if (commaIdx > 0) {
-                    base64Data = a.getUrl().substring(commaIdx + 1);
+                    return Base64.getDecoder().decode(a.getUrl().substring(commaIdx + 1));
                 }
             } else if (a.getUrl() != null && a.getUrl().startsWith("http")) {
-                byte[] bytes = fetchBytes(a.getUrl());
-                if (bytes != null) base64Data = Base64.getEncoder().encodeToString(bytes);
+                return fetchBytes(a.getUrl());
             }
-            if (base64Data == null) return null;
-            return Map.of("mimeType", mime, "data", base64Data);
         } catch (Exception e) {
-            log.debug("buildInlineImagePart failed: {}", e.getMessage());
-            return null;
+            log.debug("imageBytes failed: {}", e.getMessage());
         }
+        return null;
     }
 
     private byte[] fetchBytes(String url) {
@@ -206,24 +325,17 @@ public class GeminiClientService {
         return null;
     }
 
-    @SuppressWarnings("unchecked")
-    public String extractText(Map<String, Object> response) {
-        if (response == null) return "";
-        Object candidatesObj = response.get("candidates");
-        if (!(candidatesObj instanceof List<?> candidates) || candidates.isEmpty()) return "";
-        Object first = candidates.get(0);
-        if (!(first instanceof Map<?, ?> firstMap)) return "";
-        Object contentObj = firstMap.get("content");
-        if (!(contentObj instanceof Map<?, ?> contentMap)) return "";
-        Object partsObj = contentMap.get("parts");
-        if (!(partsObj instanceof List<?> parts)) return "";
-        StringBuilder sb = new StringBuilder();
-        for (Object p : parts) {
-            if (p instanceof Map<?, ?> pm) {
-                Object text = pm.get("text");
-                if (text != null) sb.append(text);
-            }
+    private static class NamedByteArrayResource extends ByteArrayResource {
+        private final String filename;
+
+        NamedByteArrayResource(byte[] byteArray, String filename) {
+            super(byteArray);
+            this.filename = filename;
         }
-        return sb.toString();
+
+        @Override
+        public String getFilename() {
+            return filename;
+        }
     }
 }
