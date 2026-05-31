@@ -19,6 +19,7 @@ import com.notfound.aiservice.model.dto.request.AgentChatRequest;
 import com.notfound.aiservice.model.dto.request.AttachmentRequest;
 import com.notfound.aiservice.model.dto.response.AgentChatResponse;
 import com.notfound.aiservice.model.dto.response.BookCard;
+import com.notfound.aiservice.model.dto.response.ResponseAction;
 import com.notfound.aiservice.service.AiModelClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -192,19 +193,9 @@ public class AiAgentServiceImpl implements AiAgentService {
         if (addToCartRequest && trace.stream().anyMatch(t -> AddToCartTool.NAME.equals(t.getToolName()))) {
             finalAnswer = buildAddToCartAnswer(trace);
         }
-        if (bookDetailRequest && trace.stream().noneMatch(t -> BookDetailTool.NAME.equals(t.getToolName()))) {
-            BookCard targetBook = resolveBookDetailTarget(
-                    effectiveMessage,
-                    books,
-                    recentBooksBySession.getOrDefault(sessionId, List.of())
-            );
-            if (targetBook != null) {
-                runBookDetailFallback(targetBook.getId(), context, trace);
-                books = bookCardExtractor.extract(trace);
-                finalAnswer = buildBookDetailAnswer(trace);
-            }
-        }
-        if (bookDetailRequest && trace.stream().anyMatch(t -> BookDetailTool.NAME.equals(t.getToolName()))) {
+        if (bookDetailRequest
+                && trace.stream().anyMatch(t -> BookDetailTool.NAME.equals(t.getToolName()))
+                && (finalAnswer == null || finalAnswer.isBlank())) {
             finalAnswer = buildBookDetailAnswer(trace);
         }
         if (promotionRequest && trace.stream().noneMatch(t -> PromotionTool.NAME.equals(t.getToolName()))) {
@@ -225,6 +216,7 @@ public class AiAgentServiceImpl implements AiAgentService {
         if (!books.isEmpty()) {
             recentBooksBySession.put(sessionId, books);
         }
+        ResponseAction action = buildResponseAction(trace);
 
         String intent = trace.isEmpty() ? "DIRECT_ANSWER" : trace.get(0).getToolName();
         log.info(
@@ -241,10 +233,92 @@ public class AiAgentServiceImpl implements AiAgentService {
         return AgentChatResponse.builder()
                 .sessionId(sessionId)
                 .intent(intent)
+                .action(action)
                 .response(finalAnswer)
                 .toolCalls(trace)
                 .books(books)
                 .build();
+    }
+
+    @SuppressWarnings("unchecked")
+    private ResponseAction buildResponseAction(List<AgentChatResponse.ToolCallTrace> trace) {
+        AgentChatResponse.ToolCallTrace cartTrace = trace == null
+                ? null
+                : trace.stream()
+                .filter(t -> AddToCartTool.NAME.equals(t.getToolName()))
+                .filter(AgentChatResponse.ToolCallTrace::isSuccess)
+                .reduce((first, second) -> second)
+                .orElse(null);
+        if (cartTrace == null || cartTrace.getData() == null) {
+            return null;
+        }
+
+        Map<String, Object> data = cartTrace.getData();
+        Map<String, Object> matchedBook = data.get("matchedBook") instanceof Map<?, ?> map
+                ? (Map<String, Object>) map
+                : Map.of();
+        Map<String, Object> cartItem = findMap(data.get("cart"), "cartItem");
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        putIfPresent(payload, "bookId", data.get("bookId"));
+        putIfPresent(payload, "title", firstNonNull(data.get("title"), cartItem.get("bookTitle")));
+        putIfPresent(payload, "quantity", data.get("quantity"));
+        putIfPresent(payload, "imageUrl", firstNonNull(
+                firstPresent(cartItem, "bookImageUrl", "imageUrl"),
+                firstPresent(matchedBook, "mainImageUrl", "imageUrl", "thumbnailUrl", "coverImageUrl")
+        ));
+        return ResponseAction.builder()
+                .type("CART_ITEM_ADDED")
+                .payload(payload)
+                .build();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> findMap(Object payload, String key) {
+        if (payload instanceof Map<?, ?> map) {
+            Object direct = map.get(key);
+            if (direct instanceof Map<?, ?> directMap) {
+                return (Map<String, Object>) directMap;
+            }
+            for (Object nestedKey : List.of("data", "result")) {
+                Object nested = map.get(nestedKey);
+                Map<String, Object> found = findMap(nested, key);
+                if (!found.isEmpty()) {
+                    return found;
+                }
+            }
+        }
+        return Map.of();
+    }
+
+    private void putIfPresent(Map<String, Object> target, String key, Object value) {
+        if (value != null && !String.valueOf(value).isBlank()) {
+            target.put(key, value);
+        }
+    }
+
+    private Object firstPresent(Map<String, Object> source, String... keys) {
+        if (source == null || source.isEmpty()) {
+            return null;
+        }
+        for (String key : keys) {
+            Object value = source.get(key);
+            if (value != null && !String.valueOf(value).isBlank()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private Object firstNonNull(Object... values) {
+        if (values == null) {
+            return null;
+        }
+        for (Object value : values) {
+            if (value != null && !String.valueOf(value).isBlank()) {
+                return value;
+            }
+        }
+        return null;
     }
 
     private String buildUserMessage(AgentChatRequest request, String effectiveMessage) {
@@ -1031,6 +1105,10 @@ public class AiAgentServiceImpl implements AiAgentService {
         Object result = map.get("result");
         if (result instanceof Map<?, ?> resultMap) {
             return (Map<String, Object>) resultMap;
+        }
+        Object data = map.get("data");
+        if (data instanceof Map<?, ?> dataMap) {
+            return (Map<String, Object>) dataMap;
         }
         return map;
     }
