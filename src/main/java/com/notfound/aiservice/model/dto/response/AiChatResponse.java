@@ -16,6 +16,7 @@ public class AiChatResponse {
     private String response;
     private String sessionId;
     private String intent;
+    private ResponseAction action;
     private List<ToolCallTrace> toolCalls;
     private List<BookCard> books;
 
