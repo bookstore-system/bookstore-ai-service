@@ -11,34 +11,34 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/chatbot")
 @RequiredArgsConstructor
-@Tag(name = "Chatbot", description = "Chatbot hỗ trợ khách hàng")
+@Tag(name = "Chatbot", description = "Chatbot AI Agent")
 public class ChatbotController {
+
     private final AiService aiService;
 
     @PostMapping("/chat")
-    @Operation(summary = "Chat với AI", description = "Gửi yêu cầu ChatbotRequest và nhận phản hồi từ chatbot AI.")
-    public ResponseEntity<ApiResponse<ChatbotResponse>> chat(@Valid @RequestBody ChatbotRequest request) {
-        ChatbotResponse response = aiService.chatbot(request);
+    @Operation(
+            summary = "Chat with AI Agent",
+            description = "Main chatbot endpoint. The agent handles intent detection, tool calls, and response synthesis."
+    )
+    public ResponseEntity<ApiResponse<ChatbotResponse>> chat(
+            @Valid @RequestBody ChatbotRequest request,
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
+            @RequestHeader(value = "X-User-Id", required = false) String userIdHeader
+    ) {
+        ChatbotResponse response = aiService.chatbot(request, authorizationHeader, userIdHeader);
         return ResponseEntity.ok(
                 ApiResponse.<ChatbotResponse>builder()
                         .code(1000)
-                        .message("Gửi tin nhắn thành công")
+                        .message("Gui tin nhan thanh cong")
                         .result(response)
                         .build());
-    }
-
-    @PostMapping("/ai")
-    @Operation(summary = "Chat AI dạng text", description = "Endpoint đơn giản nhận chuỗi text và trả về phản hồi chatbot.")
-    public ResponseEntity<String> simpleAi(@RequestBody String message) {
-        ChatbotRequest request = new ChatbotRequest();
-        request.setMessage(message);
-        ChatbotResponse response = aiService.chatbot(request);
-        return ResponseEntity.ok(response.getResponse());
     }
 }

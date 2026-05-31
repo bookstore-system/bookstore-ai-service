@@ -16,7 +16,21 @@ services:
       SPRING_PROFILES_ACTIVE: dev
       BOOK_SERVICE_URL: http://book-service:8080
       ORDER_SERVICE_URL: http://order-service:8080
+      CART_SERVICE_URL: http://cart-service:8080
+      PROMOTION_SERVICE_URL: http://promotion-service:8080
+      REVIEW_SERVICE_URL: http://review-service:8080
+      AI_PROVIDER: ${AI_PROVIDER:-groq}
+      SPRING_AI_MODEL_CHAT: ${SPRING_AI_MODEL_CHAT:-none}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
+      GROQ_BASE_URL: ${GROQ_BASE_URL:-https://api.groq.com/openai}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-deepseek-v4-flash}
+      AI_BASE_URL: ${AI_BASE_URL:-https://ds2api-yr0a.onrender.com}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://ds2api-yr0a.onrender.com}
     networks:
       - bookstore-network
 

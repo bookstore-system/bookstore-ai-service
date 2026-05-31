@@ -13,9 +13,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Tra cứu đơn hàng cho user. Hỗ trợ 2 chế độ:
- *  - byOrderId: nếu user/AI biết mã đơn
- *  - byUserId: lấy danh sách đơn của user hiện tại
+ * Look up orders for the current authenticated user only.
+ * Do not accept user-provided order IDs here: a guessed/copied ID must not let
+ * the chatbot disclose another user's order.
  */
 @Slf4j
 @Component
@@ -35,18 +35,10 @@ public class OrderLookupTool implements Tool {
     public ToolSchema getSchema() {
         return ToolSchema.builder()
                 .name(NAME)
-                .description("Tra cứu đơn hàng của user. Dùng khi user hỏi 'đơn của tôi đến đâu', 'trạng thái đơn x'.")
-                .parameter("orderId", ToolSchema.ParameterSchema.builder()
-                        .type("string")
-                        .description("UUID của đơn hàng cụ thể.")
-                        .build())
-                .parameter("userId", ToolSchema.ParameterSchema.builder()
-                        .type("string")
-                        .description("UUID của user (nếu cần liệt kê tất cả đơn).")
-                        .build())
+                .description("Tra cuu danh sach don hang cua user dang dang nhap. Dung khi user hoi don cua toi, trang thai don hang, lich su mua hang. Khong yeu cau va khong dung orderId do user nhap.")
                 .parameter("size", ToolSchema.ParameterSchema.builder()
                         .type("integer")
-                        .description("Số đơn cần lấy (mặc định 5).")
+                        .description("So don gan nhat can hien thi, mac dinh 5.")
                         .build())
                 .build();
     }
@@ -54,31 +46,27 @@ public class OrderLookupTool implements Tool {
     @Override
     public ToolResult execute(Map<String, Object> arguments, ToolContext context) {
         try {
-            String orderId = ArgUtil.getString(arguments, "orderId", "");
-            String userId = ArgUtil.getString(arguments, "userId", context == null ? "" : context.getUserId());
+            String userId = context == null ? "" : context.getUserId();
             int size = ArgUtil.getInt(arguments, "size", 5);
+            if (userId == null || userId.isBlank()) {
+                return ToolResult.fail(NAME, "Ban can dang nhap de xem don hang cua minh.");
+            }
 
+            Map<String, Object> orders = safeCall(() -> orderServiceClient.getMyOrders(userId.trim()));
             Map<String, Object> data = new LinkedHashMap<>();
-            if (!orderId.isBlank()) {
-                Map<String, Object> order = safeCall(() -> orderServiceClient.getOrderById(orderId.trim()));
-                data.put("mode", "byOrderId");
-                data.put("orderId", orderId);
-                data.put("order", order);
-                return ToolResult.ok(NAME, data);
-            }
-
-            if (userId != null && !userId.isBlank()) {
-                Map<String, Object> orders = safeCall(() -> orderServiceClient.getOrdersByUser(userId.trim(), 0, size));
-                data.put("mode", "byUserId");
-                data.put("userId", userId);
-                data.put("orders", orders);
-                return ToolResult.ok(NAME, data);
-            }
-
-            return ToolResult.fail(NAME, "Cần cung cấp orderId hoặc userId.");
+            data.put("mode", "currentUserOrders");
+            data.put("userId", userId);
+            data.put("size", size);
+            data.put("orders", orders);
+            log.info(
+                    "orderLookupTool fetched orders for current user: userId={}, responseKeys={}",
+                    userId,
+                    orders == null ? null : orders.keySet()
+            );
+            return ToolResult.ok(NAME, data);
         } catch (Exception e) {
             log.warn("orderLookupTool failed", e);
-            return ToolResult.fail(NAME, "Không tra cứu được đơn hàng: " + e.getMessage());
+            return ToolResult.fail(NAME, "Khong tra cuu duoc don hang: " + e.getMessage());
         }
     }
 

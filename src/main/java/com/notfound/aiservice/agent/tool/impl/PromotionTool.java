@@ -15,10 +15,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * CS-14: Gợi ý mã khuyến mãi.
- * Lấy promotion active rồi chạy rule engine nhẹ:
- *  - orderValue >= minOrderValue (nếu có)
- *  - promotion đang active
+ * CS-14: Goi y ma khuyen mai.
+ * Neu user chua co gia tri don hang, tra ve danh sach voucher dang active.
+ * Neu user co gia tri don hang, loc them theo minOrderValue.
  */
 @Slf4j
 @Component
@@ -38,39 +37,42 @@ public class PromotionTool implements Tool {
     public ToolSchema getSchema() {
         return ToolSchema.builder()
                 .name(NAME)
-                .description("Gợi ý mã khuyến mãi dựa trên giá trị đơn hàng hiện tại của user.")
+                .description("Lay danh sach voucher/ma khuyen mai dang active. orderValue la tuy chon; neu khong co thi van tra tat ca voucher hien co.")
                 .parameter("orderValue", ToolSchema.ParameterSchema.builder()
                         .type("number")
-                        .description("Tổng giá trị đơn hàng hiện tại (VNĐ).")
+                        .description("Tong gia tri don hang hien tai (VND), khong bat buoc.")
                         .build())
-                .requiredParameter("orderValue")
                 .build();
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public ToolResult execute(Map<String, Object> arguments, ToolContext context) {
-        Double orderValue = ArgUtil.getDouble(arguments, "orderValue", 0.0);
-        if (orderValue == null) orderValue = 0.0;
+        Double orderValue = ArgUtil.getDouble(arguments, "orderValue", null);
 
         try {
-            Map<String, Object> activeResponse = promotionServiceClient.getActivePromotions();
+            Map<String, Object> activeResponse = promotionServiceClient.getActivePromotions(
+                    context == null ? null : context.getAuthorizationHeader());
             List<Map<String, Object>> all = extractList(activeResponse);
-            List<Map<String, Object>> eligible = filterByRule(all, orderValue);
+            List<Map<String, Object>> eligible = orderValue == null ? all : filterByRule(all, orderValue);
 
             Map<String, Object> data = new LinkedHashMap<>();
             data.put("orderValue", orderValue);
+            data.put("activePromotions", all);
+            data.put("totalActive", all.size());
             data.put("eligiblePromotions", eligible);
             data.put("totalEligible", eligible.size());
             return ToolResult.ok(NAME, data);
         } catch (Exception e) {
             log.warn("promotionTool failed: {}", e.getMessage());
-            return ToolResult.ok(NAME, Map.of(
-                    "orderValue", orderValue,
-                    "eligiblePromotions", List.of(),
-                    "totalEligible", 0,
-                    "warning", "Promotion service không khả dụng, không có mã giảm giá nào."
-            ));
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("orderValue", orderValue);
+            data.put("activePromotions", List.of());
+            data.put("totalActive", 0);
+            data.put("eligiblePromotions", List.of());
+            data.put("totalEligible", 0);
+            data.put("warning", "Không thể lấy danh sách khuyến mãi hiện tại. Bookstore rất tiếc về sự bất tiện này.");
+            return ToolResult.ok(NAME, data);
         }
     }
 

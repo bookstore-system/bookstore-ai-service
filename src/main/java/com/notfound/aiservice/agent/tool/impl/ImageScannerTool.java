@@ -6,7 +6,7 @@ import com.notfound.aiservice.agent.tool.ToolResult;
 import com.notfound.aiservice.agent.tool.ToolSchema;
 import com.notfound.aiservice.client.BookServiceClient;
 import com.notfound.aiservice.model.dto.request.AttachmentRequest;
-import com.notfound.aiservice.service.impl.GeminiClientService;
+import com.notfound.aiservice.service.AiModelClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -15,13 +15,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * CS-13: Đọc ảnh bìa sách đa phương thức.
- * Pipeline:
- *  1. Lấy ảnh từ ToolContext.attachments (type=image, có url hoặc base64)
- *  2. Gọi Gemini multimodal để trích xuất tên sách, tác giả, NXB
- *  3. Dùng kết quả gọi sang Book-Service để tra giá + tồn kho
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -29,7 +22,7 @@ public class ImageScannerTool implements Tool {
 
     public static final String NAME = "imageScannerTool";
 
-    private final GeminiClientService geminiClientService;
+    private final AiModelClient aiModelClient;
     private final BookServiceClient bookServiceClient;
 
     @Override
@@ -41,10 +34,10 @@ public class ImageScannerTool implements Tool {
     public ToolSchema getSchema() {
         return ToolSchema.builder()
                 .name(NAME)
-                .description("Nhận diện sách từ ảnh bìa user gửi lên (multimodal). Dùng khi user gửi attachment ảnh và hỏi 'cuốn này bên mình có bán không'.")
+                .description("Nhan dien sach tu anh bia user gui len va tim sach tuong ung trong nha sach.")
                 .parameter("hint", ToolSchema.ParameterSchema.builder()
                         .type("string")
-                        .description("Câu hỏi/hint kèm theo ảnh để gợi cách trích xuất.")
+                        .description("Cau hoi hoac goi y kem theo anh.")
                         .build())
                 .build();
     }
@@ -52,35 +45,52 @@ public class ImageScannerTool implements Tool {
     @Override
     public ToolResult execute(Map<String, Object> arguments, ToolContext context) {
         if (context == null || context.getAttachments() == null || context.getAttachments().isEmpty()) {
-            return ToolResult.fail(NAME, "Không có ảnh đính kèm. User cần gửi kèm ảnh bìa sách.");
+            return ToolResult.fail(NAME, "Khong co anh dinh kem. User can gui kem anh bia sach.");
         }
 
         List<AttachmentRequest> imageAttachments = context.getAttachments().stream()
-                .filter(a -> a != null && a.getType() != null
-                        && (a.getType().toLowerCase().startsWith("image")
-                            || a.getType().equalsIgnoreCase("image")))
+                .filter(a -> a != null
+                        && a.getType() != null
+                        && a.getType().toLowerCase().startsWith("image"))
                 .toList();
-
         if (imageAttachments.isEmpty()) {
-            return ToolResult.fail(NAME, "Attachment hiện tại không phải ảnh.");
+            return ToolResult.fail(NAME, "Attachment hien tai khong phai anh.");
         }
 
         try {
-            String hint = ArgUtil.getString(arguments, "hint", "Hãy trích xuất tên sách, tác giả, NXB từ ảnh bìa.");
+            log.info(
+                    "imageScannerTool received images={}, urlKinds={}",
+                    imageAttachments.size(),
+                    imageAttachments.stream().map(a -> urlKind(a.getUrl())).toList()
+            );
+
+            String hint = ArgUtil.getString(
+                    arguments,
+                    "hint",
+                    "Hay trich xuat ten sach, tac gia, nha xuat ban tu anh bia."
+            );
             String extractionPrompt = """
-                    Bạn là module OCR bìa sách. Phân tích ảnh và trả về JSON đúng format:
+                    Ban la module OCR bia sach. Phan tich anh va chi tra ve JSON dung format:
                     {
                       "title": "...",
                       "authors": ["..."],
                       "publisher": "..."
                     }
-                    Nếu không nhận diện được trường nào, để rỗng.
-                    Yêu cầu thêm: %s
+                    Neu khong nhan dien duoc truong nao, de rong.
+                    Yeu cau them: %s
                     """.formatted(hint);
 
-            String rawExtraction = geminiClientService.askMultimodal(extractionPrompt, imageAttachments);
+            String rawExtraction = aiModelClient.askMultimodal(extractionPrompt, imageAttachments);
+            if (rawExtraction != null && rawExtraction.startsWith("MULTIMODAL_UNSUPPORTED")) {
+                return ToolResult.fail(NAME, rawExtraction);
+            }
 
             String inferredTitle = guessTitleFromJson(rawExtraction);
+            log.info(
+                    "imageScannerTool extraction inferredTitle='{}', rawPreview='{}'",
+                    inferredTitle,
+                    preview(rawExtraction)
+            );
 
             Map<String, Object> bookInfo = null;
             if (!inferredTitle.isBlank()) {
@@ -98,11 +108,10 @@ public class ImageScannerTool implements Tool {
             return ToolResult.ok(NAME, data);
         } catch (Exception e) {
             log.warn("imageScannerTool failed", e);
-            return ToolResult.fail(NAME, "Không xử lý được ảnh: " + e.getMessage());
+            return ToolResult.fail(NAME, "Khong xu ly duoc anh: " + e.getMessage());
         }
     }
 
-    /** Bóc field "title" từ JSON text Gemini trả về (parser nhẹ, không cần Jackson). */
     private String guessTitleFromJson(String text) {
         if (text == null) return "";
         int titleIdx = text.toLowerCase().indexOf("\"title\"");
@@ -114,5 +123,19 @@ public class ImageScannerTool implements Tool {
         int secondQuote = text.indexOf('"', firstQuote + 1);
         if (secondQuote < 0) return "";
         return text.substring(firstQuote + 1, secondQuote).trim();
+    }
+
+    private String urlKind(String url) {
+        if (url == null || url.isBlank()) return "empty";
+        if (url.startsWith("data:")) return "data-url";
+        if (url.startsWith("http")) return "http-url";
+        if (url.startsWith("blob:")) return "blob-url-unsupported";
+        return "other";
+    }
+
+    private String preview(String text) {
+        if (text == null) return "";
+        String compact = text.replaceAll("\\s+", " ").trim();
+        return compact.length() <= 180 ? compact : compact.substring(0, 180) + "...";
     }
 }

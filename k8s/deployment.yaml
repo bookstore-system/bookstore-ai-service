@@ -23,3 +23,104 @@ spec:
         env:
         - name: SPRING_PROFILES_ACTIVE
           value: "prod"
+        - name: AI_PROVIDER
+          valueFrom:
+            secretKeyRef:
+              name: ai-service-secret
+              key: AI_PROVIDER
+        - name: AI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-service-secret
+              key: AI_API_KEY
+        - name: GEMINI_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: ai-service-config
+              key: GEMINI_MODEL
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-service-secret
+              key: GEMINI_API_KEY
+              optional: true
+        - name: GROQ_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-service-secret
+              key: GROQ_API_KEY
+              optional: true
+        - name: GROQ_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: ai-service-config
+              key: GROQ_MODEL
+        - name: GROQ_BASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: ai-service-config
+              key: GROQ_BASE_URL
+        - name: DEEPSEEK_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-service-secret
+              key: DEEPSEEK_API_KEY
+              optional: true
+        - name: DEEPSEEK_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: ai-service-config
+              key: DEEPSEEK_MODEL
+        - name: DEEPSEEK_BASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-service-secret
+              key: DEEPSEEK_BASE_URL
+        - name: BOOK_SERVICE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: ai-service-config
+              key: BOOK_SERVICE_URL
+        - name: ORDER_SERVICE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: ai-service-config
+              key: ORDER_SERVICE_URL
+        - name: CART_SERVICE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: ai-service-config
+              key: CART_SERVICE_URL
+        - name: PROMOTION_SERVICE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: ai-service-config
+              key: PROMOTION_SERVICE_URL
+        - name: REVIEW_SERVICE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: ai-service-config
+              key: REVIEW_SERVICE_URL
+        - name: AI_AGENT_ENABLED_TOOLS
+          valueFrom:
+            configMapKeyRef:
+              name: ai-service-config
+              key: AI_AGENT_ENABLED_TOOLS
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        readinessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          failureThreshold: 6
+        livenessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30

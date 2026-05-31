@@ -15,6 +15,7 @@ import java.util.List;
 public class ToolContext {
     private String sessionId;
     private String userId;
+    private String authorizationHeader;
     private String userMessage;
     private List<AttachmentRequest> attachments;
 }
