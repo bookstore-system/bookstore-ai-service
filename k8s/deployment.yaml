@@ -25,24 +25,25 @@ spec:
           value: "prod"
         - name: AI_PROVIDER
           valueFrom:
-            configMapKeyRef:
-              name: ai-service-config
+            secretKeyRef:
+              name: ai-service-secret
               key: AI_PROVIDER
         - name: AI_API_KEY
           valueFrom:
             secretKeyRef:
               name: ai-service-secret
               key: AI_API_KEY
-        - name: PROVIDER_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: ai-service-secret
-              key: PROVIDER_API_KEY
         - name: GEMINI_MODEL
           valueFrom:
             configMapKeyRef:
               name: ai-service-config
               key: GEMINI_MODEL
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-service-secret
+              key: GEMINI_API_KEY
+              optional: true
         - name: GROQ_API_KEY
           valueFrom:
             secretKeyRef:

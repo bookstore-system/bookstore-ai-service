@@ -10,8 +10,9 @@ pipeline {
         K8S_DEPLOYMENT = 'ai-service-deployment'
         K8S_CONTAINER = 'ai-service'
 
-        PROVIDER_API_KEY_CREDENTIALS_ID = 'provider-api-key'
+        AI_PROVIDER_CREDENTIALS_ID = 'ai-provider'
         AI_API_KEY_CREDENTIALS_ID = 'ai-api-key'
+        GEMINI_API_KEY_CREDENTIALS_ID = 'gemini-api-key'
         GROQ_API_KEY_CREDENTIALS_ID = 'groq-api-key'
         DEEPSEEK_BASE_URL_CREDENTIALS_ID = 'deepseek-base-url'
         DEEPSEEK_API_KEY_CREDENTIALS_ID = 'deepseek-api-key'
@@ -63,8 +64,9 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 withCredentials([
-                    string(credentialsId: "${PROVIDER_API_KEY_CREDENTIALS_ID}", variable: 'PROVIDER_API_KEY'),
+                    string(credentialsId: "${AI_PROVIDER_CREDENTIALS_ID}", variable: 'AI_PROVIDER'),
                     string(credentialsId: "${AI_API_KEY_CREDENTIALS_ID}", variable: 'AI_API_KEY'),
+                    string(credentialsId: "${GEMINI_API_KEY_CREDENTIALS_ID}", variable: 'GEMINI_API_KEY'),
                     string(credentialsId: "${GROQ_API_KEY_CREDENTIALS_ID}", variable: 'GROQ_API_KEY'),
                     string(credentialsId: "${DEEPSEEK_BASE_URL_CREDENTIALS_ID}", variable: 'DEEPSEEK_BASE_URL'),
                     string(credentialsId: "${DEEPSEEK_API_KEY_CREDENTIALS_ID}", variable: 'DEEPSEEK_API_KEY')
@@ -80,8 +82,9 @@ pipeline {
 
                 # App secret from Jenkins Credentials. Do not apply k8s/secret.example.yaml with real values.
                 kubectl create secret generic ai-service-secret \
-                  --from-literal=PROVIDER_API_KEY="$PROVIDER_API_KEY" \
+                  --from-literal=AI_PROVIDER="$AI_PROVIDER" \
                   --from-literal=AI_API_KEY="$AI_API_KEY" \
+                  --from-literal=GEMINI_API_KEY="$GEMINI_API_KEY" \
                   --from-literal=GROQ_API_KEY="$GROQ_API_KEY" \
                   --from-literal=DEEPSEEK_BASE_URL="$DEEPSEEK_BASE_URL" \
                   --from-literal=DEEPSEEK_API_KEY="$DEEPSEEK_API_KEY" \

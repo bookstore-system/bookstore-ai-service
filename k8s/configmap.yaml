@@ -3,7 +3,6 @@ kind: ConfigMap
 metadata:
   name: ai-service-config
 data:
-  AI_PROVIDER: "deepseek"
   GEMINI_MODEL: "gemini-2.5-flash"
   GROQ_MODEL: "llama-3.3-70b-versatile"
   DEEPSEEK_MODEL: "deepseek-v4-flash"
