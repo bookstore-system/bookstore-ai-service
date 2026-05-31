@@ -13,7 +13,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -30,7 +30,7 @@ import java.util.Map;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-@ConditionalOnExpression("'${ai.provider:}' == 'groq' || '${ai.provider:}' == 'openai-compatible'")
+@ConditionalOnProperty(name = "ai.provider", havingValue = "groq")
 public class GroqClientService implements AiModelClient {
 
     private static final int MAX_TOOL_ITERATIONS = 4;
@@ -43,13 +43,13 @@ public class GroqClientService implements AiModelClient {
     @Value("${ai.provider:groq}")
     private String provider;
 
-    @Value("${openai-compatible.api.key:${groq.api.key:}}")
+    @Value("${groq.api.key:}")
     private String apiKey;
 
-    @Value("${openai-compatible.model:${groq.model:llama-3.3-70b-versatile}}")
+    @Value("${groq.model:llama-3.3-70b-versatile}")
     private String model;
 
-    @Value("${openai-compatible.base-url:${groq.base-url:https://api.groq.com/openai}}")
+    @Value("${groq.base-url:https://api.groq.com/openai}")
     private String baseUrl;
 
     @PostConstruct
