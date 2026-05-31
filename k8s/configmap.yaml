@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-service-config
+data:
+  AI_PROVIDER: "deepseek"
+  GEMINI_MODEL: "gemini-2.5-flash"
+  GROQ_MODEL: "llama-3.3-70b-versatile"
+  DEEPSEEK_MODEL: "deepseek-v4-flash"
+  GROQ_BASE_URL: "https://api.groq.com/openai"
+  BOOK_SERVICE_URL: "http://book-service:8080"
+  ORDER_SERVICE_URL: "http://order-service:8080"
+  CART_SERVICE_URL: "http://cart-service:8080"
+  PROMOTION_SERVICE_URL: "http://promotion-service:8080"
+  REVIEW_SERVICE_URL: "http://review-service:8080"
+  AI_AGENT_ENABLED_TOOLS: "searchBooksTool,bookDetailTool,recommendationTool,compareBooksTool,reviewSummaryTool,promotionTool,categoryTool,categoryBooksTool,stockCheckTool,semanticSearchTool,imageScannerTool,guardrailTool,orderLookupTool,addToCartTool"
