@@ -7,6 +7,7 @@ import com.notfound.aiservice.agent.tool.ToolContext;
 import com.notfound.aiservice.agent.tool.ToolRegistry;
 import com.notfound.aiservice.agent.tool.ToolResult;
 import com.notfound.aiservice.agent.tool.impl.AddToCartTool;
+import com.notfound.aiservice.agent.tool.impl.BookDetailTool;
 import com.notfound.aiservice.agent.tool.impl.CategoryBooksTool;
 import com.notfound.aiservice.agent.tool.impl.CategoryTool;
 import com.notfound.aiservice.agent.tool.impl.GuardrailTool;
@@ -44,6 +45,7 @@ public class AiAgentServiceImpl implements AiAgentService {
     private final BookCardExtractor bookCardExtractor;
 
     private final Map<String, List<HistoryMessage>> historyBySession = new ConcurrentHashMap<>();
+    private final Map<String, List<BookCard>> recentBooksBySession = new ConcurrentHashMap<>();
     private static final int MAX_HISTORY_TURNS = 10;
 
     private static final String SYSTEM_PROMPT = """
@@ -64,6 +66,7 @@ public class AiAgentServiceImpl implements AiAgentService {
               - Khi user hoi don hang, chi tra cuu don cua user dang dang nhap bang orderLookupTool; khong hoi/khong dung orderId user nhap.
               - Khi user muon them sach vao gio hang, phai goi addToCartTool voi ten sach user noi; quantity mac dinh la 1 neu user khong noi.
               - Khi user gui anh bia sach, phai goi imageScannerTool de nhan dien va tim sach trong nha sach.
+              - Khi user hoi mo ta/noi dung/chi tiet ve mot sach cu the hoac noi "cuon nay", phai goi bookDetailTool neu co bookId tu ngu canh/card truoc do.
               - Khi user hoi nha sach co nhung the loai/danh muc/category nao, phai goi categoryTool; khong tu bia danh sach the loai.
               - Khi user muon tim/goi y sach theo mot the loai cu the, phai goi categoryBooksTool de lay sach; khong chi liet ke danh muc roi hoi lai.
             """;
@@ -110,7 +113,7 @@ public class AiAgentServiceImpl implements AiAgentService {
             return AgentChatResponse.builder()
                     .sessionId(sessionId)
                     .intent("CONFIG_ERROR")
-                    .response("AI model API key chua duoc cau hinh. Vui long kiem tra lai API KEY cua nha cung cap AI.")
+                    .response("Kết nối đến ai thật bại!")
                     .toolCalls(List.of())
                     .books(List.of())
                     .build();
@@ -133,6 +136,7 @@ public class AiAgentServiceImpl implements AiAgentService {
         boolean categoryBookSearchRequest = looksLikeCategoryBookSearchRequest(effectiveMessage);
         boolean imageRequest = hasImageAttachment(request);
         boolean addToCartRequest = looksLikeAddToCartRequest(effectiveMessage);
+        boolean bookDetailRequest = looksLikeBookDetailRequest(effectiveMessage);
         String relatedSearchKeyword = extractRelatedSearchKeyword(effectiveMessage);
         int requestedLimit = requestedBookLimit(effectiveMessage);
 
@@ -188,6 +192,21 @@ public class AiAgentServiceImpl implements AiAgentService {
         if (addToCartRequest && trace.stream().anyMatch(t -> AddToCartTool.NAME.equals(t.getToolName()))) {
             finalAnswer = buildAddToCartAnswer(trace);
         }
+        if (bookDetailRequest && trace.stream().noneMatch(t -> BookDetailTool.NAME.equals(t.getToolName()))) {
+            BookCard targetBook = resolveBookDetailTarget(
+                    effectiveMessage,
+                    books,
+                    recentBooksBySession.getOrDefault(sessionId, List.of())
+            );
+            if (targetBook != null) {
+                runBookDetailFallback(targetBook.getId(), context, trace);
+                books = bookCardExtractor.extract(trace);
+                finalAnswer = buildBookDetailAnswer(trace);
+            }
+        }
+        if (bookDetailRequest && trace.stream().anyMatch(t -> BookDetailTool.NAME.equals(t.getToolName()))) {
+            finalAnswer = buildBookDetailAnswer(trace);
+        }
         if (promotionRequest && trace.stream().noneMatch(t -> PromotionTool.NAME.equals(t.getToolName()))) {
             runPromotionFallback(context, trace);
         }
@@ -202,6 +221,9 @@ public class AiAgentServiceImpl implements AiAgentService {
         }
         if (recommendationRequest && books.size() > requestedLimit) {
             books = books.stream().limit(requestedLimit).toList();
+        }
+        if (!books.isEmpty()) {
+            recentBooksBySession.put(sessionId, books);
         }
 
         String intent = trace.isEmpty() ? "DIRECT_ANSWER" : trace.get(0).getToolName();
@@ -498,6 +520,40 @@ public class AiAgentServiceImpl implements AiAgentService {
                 .build());
     }
 
+    private void runBookDetailFallback(
+            String bookId,
+            ToolContext context,
+            List<AgentChatResponse.ToolCallTrace> trace
+    ) {
+        Tool tool = toolRegistry.get(BookDetailTool.NAME).orElse(null);
+        if (tool == null) {
+            log.warn("Book detail fallback skipped: {} is not registered", BookDetailTool.NAME);
+            return;
+        }
+
+        Map<String, Object> args = Map.of("bookId", bookId);
+        ToolResult result;
+        try {
+            result = tool.execute(args, context);
+            log.info(
+                    "Book detail fallback executed: bookId={}, success={}, dataKeys={}",
+                    bookId,
+                    result.isSuccess(),
+                    result.getData() == null ? List.of() : result.getData().keySet()
+            );
+        } catch (Exception e) {
+            log.warn("Book detail fallback failed", e);
+            result = ToolResult.fail(BookDetailTool.NAME, e.getMessage());
+        }
+        trace.add(AgentChatResponse.ToolCallTrace.builder()
+                .toolName(BookDetailTool.NAME)
+                .arguments(args)
+                .success(result.isSuccess())
+                .errorMessage(result.getErrorMessage())
+                .data(result.getData())
+                .build());
+    }
+
     private String resolveFollowUpMessage(String sessionId, String message) {
         String normalized = normalizeVietnamese(message == null ? "" : message.toLowerCase(Locale.ROOT)).trim();
         if (!isAffirmative(normalized)) {
@@ -620,6 +676,81 @@ public class AiAgentServiceImpl implements AiAgentService {
                 || lower.contains("gio")
                 || lower.contains("cart");
         return addIntent && cartIntent;
+    }
+
+    private boolean looksLikeBookDetailRequest(String message) {
+        if (message == null || message.isBlank()) {
+            return false;
+        }
+        String lower = normalizeVietnamese(message.toLowerCase(Locale.ROOT));
+        boolean detailIntent = lower.contains("mo ta")
+                || lower.contains("noi dung")
+                || lower.contains("chi tiet")
+                || lower.contains("tom tat")
+                || lower.contains("gioi thieu ve")
+                || lower.contains("cuon nay")
+                || lower.contains("sach nay")
+                || lower.contains("quyen nay")
+                || lower.contains("tap ");
+        boolean mentionsBook = lower.contains("sach")
+                || lower.contains("truyen")
+                || lower.contains("cuon")
+                || lower.contains("quyen")
+                || lower.contains("doraemon")
+                || lower.contains("tap ");
+        return detailIntent && mentionsBook;
+    }
+
+    private BookCard resolveBookDetailTarget(
+            String message,
+            List<BookCard> currentBooks,
+            List<BookCard> recentBooks
+    ) {
+        List<BookCard> candidates = !currentBooks.isEmpty() ? currentBooks : recentBooks;
+        if (candidates == null || candidates.isEmpty()) {
+            return null;
+        }
+        if (candidates.size() == 1) {
+            return candidates.get(0);
+        }
+
+        String normalizedMessage = normalizeVietnamese(message == null ? "" : message.toLowerCase(Locale.ROOT));
+        Integer requestedVolume = extractRequestedVolume(normalizedMessage);
+        if (requestedVolume != null) {
+            String volumeText = String.valueOf(requestedVolume);
+            for (BookCard book : candidates) {
+                String title = normalizeVietnamese(book.getTitle() == null ? "" : book.getTitle().toLowerCase(Locale.ROOT));
+                if (title.matches(".*\\b(tap|vol|volume)\\s*" + Pattern.quote(volumeText) + "\\b.*")
+                        || title.matches(".*\\b" + Pattern.quote(volumeText) + "\\b.*")) {
+                    return book;
+                }
+            }
+        }
+
+        BookCard best = null;
+        int bestScore = 0;
+        for (BookCard book : candidates) {
+            String title = normalizeVietnamese(book.getTitle() == null ? "" : book.getTitle().toLowerCase(Locale.ROOT));
+            int score = 0;
+            for (String token : normalizedMessage.split("\\s+")) {
+                if (token.length() >= 3 && title.contains(token)) {
+                    score++;
+                }
+            }
+            if (score > bestScore) {
+                bestScore = score;
+                best = book;
+            }
+        }
+        return best != null ? best : candidates.get(0);
+    }
+
+    private Integer extractRequestedVolume(String normalizedMessage) {
+        Matcher matcher = Pattern.compile("\\b(?:tap|vol|volume)\\s*(\\d+)\\b").matcher(normalizedMessage);
+        if (matcher.find()) {
+            return Integer.parseInt(matcher.group(1));
+        }
+        return null;
     }
 
     private String extractAddToCartProductName(String message) {
@@ -830,6 +961,99 @@ public class AiAgentServiceImpl implements AiAgentService {
         String bookText = title == null || title.isBlank() ? "sach nay" : "\"" + title + "\"";
         return "Mình đã thêm " + quantity + " cuốn " + bookText
                 + " vào giỏ hàng của bạn.";
+    }
+
+    @SuppressWarnings("unchecked")
+    private String buildBookDetailAnswer(List<AgentChatResponse.ToolCallTrace> trace) {
+        AgentChatResponse.ToolCallTrace detailTrace = trace.stream()
+                .filter(t -> BookDetailTool.NAME.equals(t.getToolName()))
+                .reduce((first, second) -> second)
+                .orElse(null);
+        if (detailTrace == null) {
+            return "Mình chưa lấy được thông tin chi tiết của cuốn sách này.";
+        }
+        if (!detailTrace.isSuccess()) {
+            String error = detailTrace.getErrorMessage();
+            return "Mình chưa lấy được thông tin chi tiết của cuốn sách này"
+                    + (error == null || error.isBlank() ? "." : ": " + error);
+        }
+
+        Map<String, Object> data = detailTrace.getData();
+        Object rawBook = data == null ? null : data.get("book");
+        Map<String, Object> book = unwrapBook(rawBook);
+        if (book == null || book.isEmpty()) {
+            return "Mình chưa đọc được dữ liệu chi tiết của cuốn sách này.";
+        }
+
+        String title = firstNonBlank(book, "title", "bookTitle", "name", "bookName");
+        String description = firstNonBlank(book, "description", "summary", "content");
+        String authors = joinList(book.get("authorNames"));
+        String categories = joinList(book.get("categoryNames"));
+        Object price = book.get("price");
+        Object discountPrice = book.get("discountPrice");
+        Object stock = book.get("stockQuantity");
+        Object rating = book.get("averageRating");
+        Object reviewCount = book.get("reviewCount");
+
+        StringBuilder answer = new StringBuilder();
+        answer.append("Mình đã lấy thông tin chi tiết cho cuốn ");
+        answer.append(title == null ? "sách này" : "\"" + title + "\"").append(".");
+        if (description != null && !description.isBlank()) {
+            answer.append("\n\n").append(description.trim());
+        } else {
+            answer.append("\n\nHiện sách chưa có mô tả chi tiết trong hệ thống.");
+        }
+
+        List<String> facts = new ArrayList<>();
+        if (authors != null) facts.add("Tác giả: " + authors);
+        if (categories != null) facts.add("Thể loại: " + categories);
+        if (price != null || discountPrice != null) {
+            facts.add("Giá: " + formatPrice(discountPrice != null ? discountPrice : price)
+                    + (price != null && discountPrice != null ? " (giá bìa " + formatPrice(price) + ")" : ""));
+        }
+        if (stock != null) facts.add("Tình trạng: còn " + trimNumber(stock) + " cuốn");
+        if (rating != null || reviewCount != null) {
+            facts.add("Đánh giá: " + (rating == null ? "chưa có điểm" : trimNumber(rating) + "/5")
+                    + (reviewCount == null ? "" : " từ " + trimNumber(reviewCount) + " review"));
+        }
+        if (!facts.isEmpty()) {
+            answer.append("\n\n").append(String.join("\n", facts.stream().map(v -> "- " + v).toList()));
+        }
+        return answer.toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> unwrapBook(Object rawBook) {
+        if (!(rawBook instanceof Map<?, ?> rawMap)) {
+            return null;
+        }
+        Map<String, Object> map = (Map<String, Object>) rawMap;
+        Object result = map.get("result");
+        if (result instanceof Map<?, ?> resultMap) {
+            return (Map<String, Object>) resultMap;
+        }
+        return map;
+    }
+
+    private String joinList(Object value) {
+        if (!(value instanceof List<?> list) || list.isEmpty()) {
+            return null;
+        }
+        List<String> values = list.stream()
+                .filter(v -> v != null && !String.valueOf(v).isBlank())
+                .map(String::valueOf)
+                .toList();
+        return values.isEmpty() ? null : String.join(", ", values);
+    }
+
+    private String formatPrice(Object value) {
+        if (value == null) {
+            return "";
+        }
+        if (value instanceof Number number) {
+            return String.format(Locale.US, "%,.0fđ", number.doubleValue()).replace(",", ".");
+        }
+        return String.valueOf(value);
     }
 
     private String buildCategoryBooksAnswer(List<BookCard> books, String categoryName, int requestedLimit) {

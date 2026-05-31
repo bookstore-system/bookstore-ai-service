@@ -106,6 +106,7 @@ public class BookCardExtractor {
                 }
             }
             case "imageScannerTool" -> drillPage(toolName, data.get("matchedBooks"), dedup);
+            case "bookDetailTool" -> drillPage(toolName, data.get("book"), dedup);
             default -> {}
         }
     }
