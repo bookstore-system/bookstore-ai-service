@@ -12,6 +12,8 @@ clients:
 
 ai:
   provider: ${AI_PROVIDER:gemini} # gemini, groq, deepseek hoac deekseek
+  agent:
+    enabled-tools: searchBooksTool,bookDetailTool,recommendationTool,compareBooksTool,reviewSummaryTool,promotionTool,categoryTool,categoryBooksTool,stockCheckTool,semanticSearchTool,imageScannerTool,guardrailTool,orderLookupTool,addToCartTool
 
 gemini:
   api:
