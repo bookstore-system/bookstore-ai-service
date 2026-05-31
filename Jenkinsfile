@@ -94,7 +94,14 @@ pipeline {
                 kubectl apply -f k8s/deployment.yaml
                 kubectl apply -f k8s/service.yaml
 
-                kubectl rollout status deployment/${K8S_DEPLOYMENT} --timeout=180s
+                if ! kubectl rollout status deployment/${K8S_DEPLOYMENT} --timeout=300s; then
+                  echo "Rollout failed. Collecting Kubernetes diagnostics..."
+                  kubectl describe deployment/${K8S_DEPLOYMENT} || true
+                  kubectl get pods -l app=ai-service -o wide || true
+                  kubectl describe pods -l app=ai-service || true
+                  kubectl logs -l app=ai-service --all-containers=true --tail=200 || true
+                  exit 1
+                fi
                 '''
                 }
             }
