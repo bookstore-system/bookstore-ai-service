@@ -1,0 +1,27 @@
+spring:
+  profiles:
+    active: test
+  ai:
+    google:
+      genai:
+        api-key: test-gemini-key
+        chat:
+          options:
+            model: gemini-2.5-flash
+
+clients:
+  book-service:
+    url: http://localhost:8082
+  order-service:
+    url: http://localhost:8084
+  cart-service:
+    url: http://localhost:8083
+  promotion-service:
+    url: http://localhost:8086
+  review-service:
+    url: http://localhost:8087
+
+gemini:
+  api:
+    key: test-gemini-key
+  model: gemini-2.5-flash

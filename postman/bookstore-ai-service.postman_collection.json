@@ -1,0 +1,926 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-ai-service-2026",
+    "name": "Bookstore AI Service",
+    "description": "Full API test cho bookstore-ai-service.\n\nBase path: `/api/v1`\nChat đã được gộp với AI Agent — endpoint `/api/v1/chatbot/chat` là endpoint chat duy nhất và có khả năng tool-calling (function calling + multi-step loop).\n\n**Endpoints chính:**\n- `POST /api/v1/chatbot/chat` — Chat AI Agent (trả về `response`, `sessionId`, `intent`, `toolCalls`, `books`).\n- `GET  /api/v1/chatbot/tools` — Liệt kê các tool agent đang bật.\n- `POST /api/v1/chatbot/ai` — Chat dạng text đơn giản (vẫn dùng agent bên dưới, response là plain string).\n- `POST /api/v1/chat/ai` — Alias legacy của `/chatbot/ai`.\n- `POST /api/v1/ai/chat` — Chat dùng `AiChatRequest`, cũng đi qua agent.\n- `POST /api/v1/ai/search` — Tìm sách trực tiếp (không qua agent).\n- `GET  /api/v1/ai/report` — Báo cáo đơn hàng + tóm tắt AI.\n\n**Field `books` (mới):**\nCard sách chuẩn hoá BE đã gom từ mọi tool (`searchBooksTool`, `stockCheckTool`, `recommendationTool`, `semanticSearchTool`, `compareBooksTool`, `imageScannerTool`). FE chỉ cần đọc `result.books` thay vì parse `toolCalls[].data`.\n\nShape: `[{ id, title, price, discountPrice, mainImageUrl, averageRating, reviewCount, stockQuantity, authorNames, source }]`.\n\n**Chạy service:**\n- Docker Compose: `http://localhost:8090`\n- Maven local: `http://localhost:8080`\n\n**Phụ thuộc:** `GEMINI_API_KEY`, `BOOK_SERVICE_URL`, `ORDER_SERVICE_URL`, `REVIEW_SERVICE_URL`, `PROMOTION_SERVICE_URL`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8090",
+      "type": "string"
+    },
+    {
+      "key": "sessionId",
+      "value": "session-demo-001",
+      "type": "string",
+      "description": "Session chat dùng chung; tự cập nhật sau các request chat."
+    },
+    {
+      "key": "userId",
+      "value": "00000000-0000-0000-0000-000000000001",
+      "type": "string",
+      "description": "UUID giả lập user — dùng cho các tool cần userId (recommendation, orderLookup)."
+    },
+    {
+      "key": "sampleOrderId",
+      "value": "00000000-0000-0000-0000-000000000abc",
+      "type": "string",
+      "description": "Mã đơn hàng mẫu để test orderLookupTool."
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Chatbot (AI Agent)",
+      "description": "Endpoint chat chính của service. Bên dưới là vòng lặp tool-calling: Gemini tự chọn tool (search, recommendation, order, multimodal, ...), agent thực thi tool rồi tổng hợp câu trả lời.\n\n**Response wrapper:** `{ code: 1000, message: \"Gửi tin nhắn thành công\", result: { response, sessionId, intent, toolCalls[] } }`.",
+      "item": [
+        {
+          "name": "List Tools",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('ApiResponse success', () => {",
+                  "    pm.expect(body.code).to.eql(200);",
+                  "    pm.expect(body.message).to.eql('Success');",
+                  "    pm.expect(body.result).to.be.an('array');",
+                  "});",
+                  "pm.test('Có ít nhất 1 tool và có field name/description/parameters', () => {",
+                  "    pm.expect(body.result.length).to.be.above(0);",
+                  "    const first = body.result[0];",
+                  "    pm.expect(first).to.have.property('name');",
+                  "    pm.expect(first).to.have.property('description');",
+                  "    pm.expect(first).to.have.property('parameters');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chatbot/tools",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chatbot", "tools"]
+            },
+            "description": "Liệt kê metadata các tool agent đang bật. Verify ToolRegistry và cấu hình `ai.agent.enabled-tools`."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat - Search by Keyword (searchBooksTool)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('ApiResponse chatbot success', () => {",
+                  "    pm.expect(body.code).to.eql(1000);",
+                  "    pm.expect(body.message).to.eql('Gửi tin nhắn thành công');",
+                  "    pm.expect(body.result).to.be.an('object');",
+                  "});",
+                  "pm.test('Agent response structure', () => {",
+                  "    pm.expect(body.result.response).to.be.a('string').that.is.not.empty;",
+                  "    pm.expect(body.result.sessionId).to.be.a('string').that.is.not.empty;",
+                  "    pm.expect(body.result.intent).to.be.a('string');",
+                  "    pm.expect(body.result.toolCalls).to.be.an('array');",
+                  "    pm.expect(body.result.books).to.be.an('array');",
+                  "});",
+                  "pm.test('Agent đã gọi searchBooksTool (nếu Gemini hoạt động)', () => {",
+                  "    const used = (body.result.toolCalls || []).map(t => t.toolName);",
+                  "    if (body.result.intent !== 'CONFIG_ERROR' && body.result.intent !== 'OUT_OF_SCOPE') {",
+                  "        pm.expect(used).to.include.oneOf(['searchBooksTool', 'semanticSearchTool']);",
+                  "    }",
+                  "});",
+                  "pm.test('books[] có shape BookCard chuẩn hoá', () => {",
+                  "    const books = body.result.books || [];",
+                  "    books.forEach((b) => {",
+                  "        pm.expect(b).to.have.property('id');",
+                  "        pm.expect(b).to.have.property('title');",
+                  "    });",
+                  "});",
+                  "if (body.result && body.result.sessionId) {",
+                  "    pm.collectionVariables.set('sessionId', body.result.sessionId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Tìm cho tôi sách về Clean Code của Robert C. Martin\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"userId\": \"{{userId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chatbot/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chatbot", "chat"]
+            },
+            "description": "Keyword rõ ràng → Gemini chọn `searchBooksTool` (hoặc fallback `semanticSearchTool`). Response phải kèm `toolCalls` chứa trace tool đã dùng — đây là dấu hiệu chứng minh chat đã là AI Agent thật sự."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat - Semantic Search (semanticSearchTool)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Wrapper code = 1000', () => pm.expect(body.code).to.eql(1000));",
+                  "pm.test('Có toolCalls', () => pm.expect(body.result.toolCalls).to.be.an('array'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Gợi ý cho tôi vài cuốn sách giúp tôi cảm thấy bình yên và chữa lành sau ngày làm việc căng thẳng\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"userId\": \"{{userId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chatbot/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chatbot", "chat"]
+            },
+            "description": "Câu hỏi mang ngữ nghĩa/cảm xúc thay vì keyword chính xác → kỳ vọng agent chọn `semanticSearchTool`."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat - Personalized Recommendation (recommendationTool)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.expect(body.result.toolCalls).to.be.an('array');",
+                  "pm.expect(body.result.books).to.be.an('array');",
+                  "pm.test('Mỗi book trong books[] có id + title', () => {",
+                  "    (body.result.books || []).forEach((b) => {",
+                  "        pm.expect(b.id, 'book.id').to.be.a('string').that.is.not.empty;",
+                  "        pm.expect(b.title, 'book.title').to.be.a('string').that.is.not.empty;",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Dựa trên lịch sử mua hàng của tôi, hãy gợi ý 3 cuốn sách phù hợp\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"userId\": \"{{userId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chatbot/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chatbot", "chat"]
+            },
+            "description": "Yêu cầu cá nhân hoá → cần `userId` truyền vào ToolContext, agent kỳ vọng gọi `recommendationTool`."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat - Compare Books (compareBooksTool)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.expect(body.result.response).to.be.a('string').that.is.not.empty;"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"So sánh giúp tôi giữa Clean Code và The Pragmatic Programmer, cuốn nào nên đọc trước?\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"userId\": \"{{userId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chatbot/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chatbot", "chat"]
+            },
+            "description": "Câu hỏi so sánh nhiều cuốn → agent có thể chuỗi: `searchBooksTool` → `compareBooksTool` (multi-step tool loop)."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat - Review Summary (reviewSummaryTool)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.expect(body.result).to.be.an('object');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Cuốn Atomic Habits đang được đánh giá thế nào? Tóm tắt review giúp tôi\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"userId\": \"{{userId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chatbot/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chatbot", "chat"]
+            },
+            "description": "Hỏi về review/sentiment → agent chuỗi `searchBooksTool` (lấy id) → `reviewSummaryTool` (tóm tắt review)."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat - Stock & Price Filter (stockCheckTool)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.expect(body.result.toolCalls).to.be.an('array');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Liệt kê các sách thể loại lập trình còn hàng, giá dưới 300 nghìn\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"userId\": \"{{userId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chatbot/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chatbot", "chat"]
+            },
+            "description": "Có filter giá/thể loại/tồn kho → kỳ vọng `stockCheckTool` được chọn."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat - Promotion (promotionTool)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.expect(body.result).to.be.an('object');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Đơn của tôi đang khoảng 500 nghìn, có mã giảm giá nào áp dụng được không?\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"userId\": \"{{userId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chatbot/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chatbot", "chat"]
+            },
+            "description": "Câu hỏi về mã giảm giá có đề cập giá trị đơn → agent phải truyền `orderValue` cho `promotionTool`."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat - Order Lookup by User (orderLookupTool)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.expect(body.result.toolCalls).to.be.an('array');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Các đơn hàng gần đây của tôi đến đâu rồi?\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"userId\": \"{{userId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chatbot/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chatbot", "chat"]
+            },
+            "description": "Tra đơn theo `userId` truyền trong request → agent gọi `orderLookupTool` mode `byUserId`."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat - Order Lookup by OrderId",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.expect(body.result).to.be.an('object');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Cho tôi xem chi tiết đơn hàng có mã {{sampleOrderId}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"userId\": \"{{userId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chatbot/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chatbot", "chat"]
+            },
+            "description": "Tra đơn theo `orderId` cụ thể → `orderLookupTool` mode `byOrderId`."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat - Multimodal Image (imageScannerTool)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.expect(body.result.toolCalls).to.be.an('array');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Cuốn này bên mình có bán không? Kèm theo ảnh bìa nha\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"userId\": \"{{userId}}\",\n  \"attachments\": [\n    {\n      \"type\": \"image/jpeg\",\n      \"url\": \"https://salt.tikicdn.com/cache/w1200/ts/product/df/48/21/3b65d4d9942ea0cc8c5d6f3a4f9b2c8b.jpg\",\n      \"name\": \"book-cover.jpg\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chatbot/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chatbot", "chat"]
+            },
+            "description": "Có attachment ảnh → kỳ vọng agent gọi `imageScannerTool` (Gemini multimodal OCR bìa) rồi nối sang `searchBooksTool` để tra giá/tồn kho."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat - Out Of Scope (guardrail)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Guardrail chặn câu out-of-scope', () => {",
+                  "    pm.expect(body.result.intent).to.eql('OUT_OF_SCOPE');",
+                  "    pm.expect(body.result.response).to.be.a('string').that.is.not.empty;",
+                  "    const used = (body.result.toolCalls || []).map(t => t.toolName);",
+                  "    pm.expect(used).to.include('guardrailTool');",
+                  "    pm.expect(body.result.books).to.be.an('array').that.is.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Viết hộ tôi một bài văn nghị luận về tình mẹ con dài 800 chữ\",\n  \"sessionId\": \"chatbot-guardrail-test\",\n  \"userId\": \"{{userId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chatbot/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chatbot", "chat"]
+            },
+            "description": "Câu hỏi ngoài phạm vi nhà sách → pre-flight `guardrailTool` chặn ngay, không gọi Gemini chính. `intent` phải = `OUT_OF_SCOPE`."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat - Session Continuation (multi-turn memory)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Cùng sessionId ⇒ agent nhớ ngữ cảnh trước', () => {",
+                  "    pm.expect(body.result.sessionId).to.eql(pm.collectionVariables.get('sessionId'));",
+                  "    pm.expect(body.result.response).to.be.a('string').that.is.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Trong các cuốn bạn vừa gợi ý, cuốn nào rẻ nhất?\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"userId\": \"{{userId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chatbot/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chatbot", "chat"]
+            },
+            "description": "Cùng `sessionId` với request trước → verify history-by-session đang hoạt động (agent phải hiểu 'cuốn bạn vừa gợi ý' từ turn trước)."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat - Validation 400 (message rỗng)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Phản hồi 400 do @NotBlank message', () => {",
+                  "    pm.expect([400, 422]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"userId\": \"{{userId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chatbot/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chatbot", "chat"]
+            },
+            "description": "`ChatbotRequest.message` có `@NotBlank` → gửi rỗng phải bị validate fail (400/422)."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat AI dạng text (/chatbot/ai)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Plain text response', () => {",
+                  "    pm.expect(pm.response.text()).to.be.a('string').that.is.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "\"Gợi ý cho tôi một cuốn sách Java cơ bản\"",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chatbot/ai",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chatbot", "ai"]
+            },
+            "description": "Body là chuỗi JSON, response là chuỗi phản hồi chatbot. Bên dưới vẫn dùng agent, nhưng endpoint này không expose toolCalls."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "02 - Chat (Legacy alias)",
+      "item": [
+        {
+          "name": "Gửi tin nhắn AI alias (/chat/ai)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Plain text response', () => {",
+                  "    pm.expect(pm.response.text()).to.be.a('string').that.is.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "\"Sách nào phù hợp cho người mới học Python?\"",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/ai",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "chat", "ai"]
+            },
+            "description": "Endpoint tương thích cũ — body chuỗi JSON, response chuỗi. Vẫn dùng agent bên dưới."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "03 - AI",
+      "item": [
+        {
+          "name": "AI Chat (qua agent)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('ApiResponse success', () => {",
+                  "    pm.expect(body.code).to.eql(200);",
+                  "    pm.expect(body.message).to.eql('Success');",
+                  "    pm.expect(body.result).to.be.an('object');",
+                  "    pm.expect(body.result.response).to.be.a('string');",
+                  "    pm.expect(body.result.sessionId).to.be.a('string');",
+                  "    pm.expect(body.result.toolCalls).to.be.an('array');",
+                  "    pm.expect(body.result.books).to.be.an('array');",
+                  "});",
+                  "if (body.result && body.result.sessionId) {",
+                  "    pm.collectionVariables.set('sessionId', body.result.sessionId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Tóm tắt ngắn về Clean Code trong 2 câu\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"userId\": \"{{userId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ai/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "ai", "chat"]
+            },
+            "description": "Chat AI microservice — `AiChatRequest` (message bắt buộc, sessionId/userId tuỳ chọn). Cũng đi qua AI Agent bên dưới."
+          },
+          "response": []
+        },
+        {
+          "name": "AI Search",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('ApiResponse success', () => {",
+                  "    pm.expect(body.code).to.eql(200);",
+                  "    pm.expect(body.message).to.eql('Success');",
+                  "    pm.expect(body.result).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"keyword\": \"clean code\",\n  \"page\": 0,\n  \"size\": 5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ai/search",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "ai", "search"]
+            },
+            "description": "Tìm kiếm sách trực tiếp qua book-service (không qua agent)."
+          },
+          "response": []
+        },
+        {
+          "name": "AI Report",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('ApiResponse success', () => {",
+                  "    pm.expect(body.code).to.eql(200);",
+                  "    pm.expect(body.message).to.eql('Success');",
+                  "    pm.expect(body.result).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ai/report",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "ai", "report"]
+            },
+            "description": "Báo cáo đơn hàng + tóm tắt AI (cần ORDER_SERVICE_URL và GEMINI_API_KEY)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "04 - OpenAPI / Docs",
+      "item": [
+        {
+          "name": "OpenAPI JSON",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('OpenAPI document', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.openapi || body.swagger).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v3/api-docs",
+              "host": ["{{baseUrl}}"],
+              "path": ["v3", "api-docs"]
+            },
+            "description": "Springdoc OpenAPI spec."
+          },
+          "response": []
+        },
+        {
+          "name": "Swagger UI (browser)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/swagger-ui.html",
+              "host": ["{{baseUrl}}"],
+              "path": ["swagger-ui.html"]
+            },
+            "description": "Mở trong trình duyệt để xem Swagger UI."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

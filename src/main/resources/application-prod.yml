@@ -1,0 +1,31 @@
+clients:
+  book-service:
+    url: ${BOOK_SERVICE_URL:http://book-service:8080}
+  order-service:
+    url: ${ORDER_SERVICE_URL:http://order-service:8080}
+  cart-service:
+    url: ${CART_SERVICE_URL:http://cart-service:8080}
+  promotion-service:
+    url: ${PROMOTION_SERVICE_URL:http://promotion-service:8080}
+  review-service:
+    url: ${REVIEW_SERVICE_URL:http://review-service:8080}
+
+ai:
+  provider: ${AI_PROVIDER:gemini} # gemini, groq, deepseek hoac deekseek
+
+gemini:
+  api:
+    key: ${GEMINI_API_KEY:${AI_API_KEY:}}
+  model: ${GEMINI_MODEL:${AI_MODEL:gemini-2.5-flash}}
+
+groq:
+  api:
+    key: ${GROQ_API_KEY:}
+  model: ${GROQ_MODEL:llama-3.3-70b-versatile}
+  base-url: ${GROQ_BASE_URL:https://api.groq.com/openai}
+
+deepseek:
+  api:
+    key: ${DEEPSEEK_API_KEY:${AI_API_KEY:}}
+  model: ${DEEPSEEK_MODEL:${AI_MODEL:deepseek-v4-flash}}
+  base-url: ${DEEPSEEK_BASE_URL:${AI_BASE_URL:https://ds2api-yr0a.onrender.com}}
