@@ -1,3 +1,12 @@
+spring:
+  ai:
+    google:
+      genai:
+        api-key: ${GEMINI_API_KEY:${AI_API_KEY:}}
+        chat:
+          options:
+            model: ${GEMINI_MODEL:${AI_MODEL:gemini-2.5-flash}}
+
 clients:
   book-service:
     url: ${BOOK_SERVICE_URL:http://book-service:8080}
