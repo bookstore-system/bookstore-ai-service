@@ -24,6 +24,7 @@ public class AiServiceImpl implements AiService {
                 .response(agentResponse.getResponse())
                 .sessionId(agentResponse.getSessionId())
                 .intent(agentResponse.getIntent())
+                .action(agentResponse.getAction())
                 .toolCalls(mapChatbotTraces(agentResponse.getToolCalls()))
                 .books(agentResponse.getBooks() == null ? List.of() : agentResponse.getBooks())
                 .build();
