@@ -5,7 +5,7 @@ spring:
         api-key: ${GEMINI_API_KEY:${AI_API_KEY:}}
         chat:
           options:
-            model: ${GEMINI_MODEL:${AI_MODEL:gemini-2.5-flash}}
+            model: ${GEMINI_MODEL:gemini-2.5-flash}
 
 clients:
   book-service:
@@ -27,7 +27,7 @@ ai:
 gemini:
   api:
     key: ${GEMINI_API_KEY:${AI_API_KEY:}}
-  model: ${GEMINI_MODEL:${AI_MODEL:gemini-2.5-flash}}
+  model: ${GEMINI_MODEL:gemini-2.5-flash}
 
 groq:
   api:
