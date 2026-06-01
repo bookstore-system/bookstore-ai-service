@@ -146,9 +146,68 @@ public class GeminiClientService implements AiModelClient {
                     .call()
                     .content();
         } catch (Exception e) {
-            log.warn("Spring AI chatWithTools failed: {}", e.getMessage());
-            return "AI service loi: " + e.getMessage();
+            log.warn(
+                    "Spring AI chatWithTools failed: model={}, tools={}, rootCause={}",
+                    model,
+                    tools == null ? List.of() : tools.stream().map(Tool::getName).toList(),
+                    rootCauseMessage(e),
+                    e
+            );
+            return chatWithoutToolCallbacks(chatModel, systemPrompt, prompt, tools, e);
         }
+    }
+
+    private String chatWithoutToolCallbacks(
+            ChatModel chatModel,
+            String systemPrompt,
+            String prompt,
+            Collection<Tool> tools,
+            Exception toolCallingError
+    ) {
+        try {
+            return ChatClient.create(chatModel)
+                    .prompt()
+                    .system(systemPrompt)
+                    .user(buildNoToolFallbackPrompt(prompt, tools))
+                    .call()
+                    .content();
+        } catch (Exception fallbackError) {
+            log.warn(
+                    "Spring AI fallback chat failed after tool-calling error. toolError={}, fallbackRootCause={}",
+                    rootCauseMessage(toolCallingError),
+                    rootCauseMessage(fallbackError),
+                    fallbackError
+            );
+            return "AI service loi: " + rootCauseMessage(fallbackError);
+        }
+    }
+
+    private String buildNoToolFallbackPrompt(String prompt, Collection<Tool> tools) {
+        StringBuilder fallbackPrompt = new StringBuilder();
+        fallbackPrompt.append(prompt == null ? "" : prompt);
+        if (tools != null && !tools.isEmpty()) {
+            fallbackPrompt.append("\n\n[Luu y he thong: Yeu cau tool-calling vua bi Gemini tu choi. ");
+            fallbackPrompt.append("Hay tra loi ngan gon bang kien thuc hien co. ");
+            fallbackPrompt.append("Neu can du lieu thuc te tu nha sach, hay noi ro ban can tra cuu them thay vi bia thong tin. ");
+            fallbackPrompt.append("Cac tool kha dung: ");
+            fallbackPrompt.append(tools.stream().map(Tool::getName).toList());
+            fallbackPrompt.append("]");
+        }
+        return fallbackPrompt.toString();
+    }
+
+    private String rootCauseMessage(Throwable throwable) {
+        if (throwable == null) {
+            return "unknown error";
+        }
+
+        Throwable root = throwable;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        return root.getMessage() == null || root.getMessage().isBlank()
+                ? root.getClass().getSimpleName()
+                : root.getMessage();
     }
 
     private String buildUserPrompt(List<String> historyMessages, String userMessage) {
